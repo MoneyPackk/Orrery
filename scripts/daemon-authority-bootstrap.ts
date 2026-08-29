@@ -21,6 +21,7 @@ import {
   MissionAuthority,
   MissionRegistry,
   TrustedApprovalService,
+  PinnedApprovalVerifier,
   missionStoreRepository,
   type ApprovedRepository,
   type MissionEventRecord,
@@ -43,6 +44,7 @@ export interface DaemonAuthorityBootstrap {
   readonly eventSource: FileMissionEventStore;
   readonly recoverActiveMissions: () => Promise<void>;
   readonly promotionApprovalIssuer?: PromotionApprovalIssuer;
+  readonly promotionApprovalEnabled: boolean;
 }
 
 export interface DaemonAuthorityOptions {
@@ -50,6 +52,7 @@ export interface DaemonAuthorityOptions {
   readonly trustedVerificationCommands?: readonly VerificationCommand[];
   readonly gitInspector?: GitInspector;
   readonly trustedApprovalContext?: TrustedApprovalContext;
+  readonly trustedApprovalPublicKey?: string;
 }
 
 export async function createDaemonAuthority(runtimeDirectory: string, options: DaemonAuthorityOptions = {}): Promise<DaemonAuthorityBootstrap> {
@@ -82,6 +85,8 @@ export async function createDaemonAuthority(runtimeDirectory: string, options: D
   };
   const runner = new MissionRunner({ workspaceService, commandRunner, evidenceStore, repository: unusedRunnerRepository, workspaceRoot });
   const approvals = options.trustedApprovalContext ? new TrustedApprovalService(options.trustedApprovalContext) : undefined;
+  const pinnedPublicKey = options.trustedApprovalPublicKey ?? approvals?.publicKey;
+  const approvalVerifier = pinnedPublicKey ? new PinnedApprovalVerifier(pinnedPublicKey) : { verify: () => { throw new Error("Promotion is unavailable without an Electron-owned daemon."); } };
   const authority = new MissionAuthority({
     missionStore,
     eventStore,
@@ -95,7 +100,7 @@ export async function createDaemonAuthority(runtimeDirectory: string, options: D
         ? options.verificationCommandResolver(repository, context)
         : resolveDefaultVerificationCommand(repository, trustedVerificationCommands[0]);
     },
-    promotionApprovalVerifier: approvals ?? { consume: () => { throw new Error("Promotion is unavailable without trusted native approval."); } },
+    promotionApprovalVerifier: approvalVerifier,
   });
   const recoverActiveMissions = async () => {
     for (const mission of await missionStore.list()) {
@@ -131,7 +136,7 @@ export async function createDaemonAuthority(runtimeDirectory: string, options: D
     approve: (input: RepositoryApprovalInput) => repositoryRegistry.approve(input),
   });
   const registry = new MissionRegistry(registryRepository);
-  return { authority, registry, eventSource: eventStore, recoverActiveMissions, ...(approvals ? { promotionApprovalIssuer: approvals } : {}) };
+  return { authority, registry, eventSource: eventStore, recoverActiveMissions, promotionApprovalEnabled: Boolean(pinnedPublicKey), ...(options.trustedApprovalContext && approvals ? { promotionApprovalIssuer: approvals } : {}) };
 }
 
 function jsonRepositoryPersistence(path: string): RepositoryRegistryPersistence {

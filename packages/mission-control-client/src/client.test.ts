@@ -121,10 +121,10 @@ describe("MissionControlClient", () => {
     )).resolves.toMatchObject({ mission: { status: "cancelled" }, runId: "run-1" });
     await expect(exchange(
       client.inspectMission({ missionId: "m1", planRevisionId: "plan-1" }),
-      (request) => ({ type: "mission_inspection", version: PROTOCOL_VERSION, requestId: request.requestId, mission, planRevisionId: "plan-1" }),
-    )).resolves.toEqual({ mission, planRevisionId: "plan-1" });
+      (request) => ({ type: "mission_inspection", version: PROTOCOL_VERSION, requestId: request.requestId, mission, planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), review: { changes: [], evidence: [] } }),
+    )).resolves.toEqual({ mission, planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), review: { changes: [], evidence: [] } });
     await expect(exchange(
-      client.promoteMission({ intentId: "intent-promote", missionId: "m1", planRevisionId: "plan-1", changeRevision: "change-1", decision: "accepted", approvalCapability: "capability-1" }),
+      client.promoteMission({ intentId: "intent-promote", missionId: "m1", planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), decision: "accepted", approvalCapability: "capability-1" }),
       (request) => ({ type: "mission_promotion", version: PROTOCOL_VERSION, requestId: request.requestId, mission: { ...mission, status: "accepted" }, planRevisionId: "plan-1", changeRevision: "change-1", decision: "accepted", reviewerId: "reviewer-1", result: "promoted" }),
     )).resolves.toMatchObject({ result: "promoted", changeRevision: "change-1" });
 
@@ -157,7 +157,7 @@ describe("MissionControlClient", () => {
     transport.receive({ type: "mission_run_accepted", version: PROTOCOL_VERSION, requestId: request.requestId, mission: { ...mission, id: "m2" }, runId: "run-1" });
     await expect(running).rejects.toThrow(/does not match/i);
 
-    const promoting = client.promoteMission({ intentId: "intent-promote", missionId: "m1", planRevisionId: "plan-1", changeRevision: "change-1", decision: "accepted", approvalCapability: "capability-1" });
+    const promoting = client.promoteMission({ intentId: "intent-promote", missionId: "m1", planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), decision: "accepted", approvalCapability: "capability-1" });
     await Promise.resolve();
     const promoteRequest = transport.sent.at(-1)!;
     transport.receive({ type: "mission_promotion", version: PROTOCOL_VERSION, requestId: promoteRequest.requestId, mission: { ...mission, status: "accepted" }, planRevisionId: "plan-1", changeRevision: "change-2", decision: "accepted", reviewerId: "reviewer-1", result: "promoted" });

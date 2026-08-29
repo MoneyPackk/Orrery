@@ -156,7 +156,7 @@ export class MissionControlClient {
 
   async inspectMission(input: InspectMissionInput): Promise<MutationResult<"mission_inspection">> {
     const response = await this.mutation("inspect_mission", input, "mission_inspection");
-    if (response.mission.id !== input.missionId || response.planRevisionId !== input.planRevisionId || response.mission.plan.id !== input.planRevisionId) throw responseMismatch("mission inspection");
+    if (response.mission.id !== input.missionId || response.planRevisionId !== input.planRevisionId || response.mission.plan.id !== input.planRevisionId || !response.changeRevision || !response.contentDigest) throw responseMismatch("mission inspection");
     return responseBody(response);
   }
 

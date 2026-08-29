@@ -65,7 +65,12 @@ export function AppShell() {
             <div className="workspace-grid">
               <PlanCanvas mission={active} onUpdate={(plan) => missions.updatePlan(active.id, plan)} onApprove={() => missions.approvePlan(active.id)} onStart={() => { void missions.start(active.id); }} onCancel={() => missions.cancel(active.id)} />
               <RuntimeTimeline mission={active} onResolve={(runId, requestId, decision) => missions.resolveCapability(active.id, runId, requestId, decision)} />
-              <ReviewStudio mission={active} onReview={(decision) => missions.review(active.id, decision)} />
+              <ReviewStudio mission={active} onReview={(decision) => {
+                if (!window.orreryDesktop || decision === "request_revision") { missions.review(active.id, decision); return; }
+                void window.orreryDesktop.missions.reviewAndPromote({ intentId: crypto.randomUUID(), missionId: active.id, planRevisionId: active.plan.id, decision: decision === "accept" ? "accepted" : "rejected" })
+                  .then(() => missions.review(active.id, decision))
+                  .catch(() => undefined);
+              }} />
             </div>
           </main>
         ) : (

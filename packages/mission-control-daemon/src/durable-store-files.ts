@@ -203,17 +203,20 @@ function assertOperations(value: unknown) {
   for (const [intentId, operation] of Object.entries(value)) {
     assertIdentifier(intentId, "operation id");
     assertObject(operation, "mission operation");
-    if (!new Set(["run", "promote"]).has(String(operation.operation)) || !new Set(["prepared", "in_progress", "committed"]).has(String(operation.state)) || typeof operation.requestDigest !== "string" || !/^[0-9a-f]{64}$/.test(operation.requestDigest)) throw new Error("Corrupt mission operation record.");
+    if (!new Set(["run", "promote"]).has(String(operation.operation)) || !new Set(["prepared", "in_progress", "expired", "committed"]).has(String(operation.state)) || typeof operation.requestDigest !== "string" || !/^[0-9a-f]{64}$/.test(operation.requestDigest)) throw new Error("Corrupt mission operation record.");
     if (operation.operation === "run") {
       exact(operation, operation.state === "committed" ? ["operation", "requestDigest", "state", "runId", "result"] : ["operation", "requestDigest", "state", "runId"], "mission operation");
       if (typeof operation.runId !== "string") throw new Error("Corrupt mission operation record.");
       assertIdentifier(operation.runId, "run id");
       if (operation.state === "committed") assertRunResult(operation.result);
     } else {
-      const fields = operation.state === "committed" ? ["operation", "requestDigest", "state", "reviewerId", "result"] : operation.state === "in_progress" ? ["operation", "requestDigest", "state", "reviewerId", "token"] : ["operation", "requestDigest", "state", "reviewerId"];
+      const fields = operation.state === "committed" ? ["operation", "requestDigest", "state", "reviewerId", "approvalNonce", "approvalExpiresAt", "result"] : operation.state === "in_progress" ? ["operation", "requestDigest", "state", "reviewerId", "approvalNonce", "approvalExpiresAt", "token"] : ["operation", "requestDigest", "state", "reviewerId", "approvalNonce", "approvalExpiresAt"];
       exact(operation, fields, "mission operation");
       if (typeof operation.reviewerId !== "string") throw new Error("Corrupt mission operation record.");
       assertIdentifier(operation.reviewerId, "reviewer id");
+      if (typeof operation.approvalNonce !== "string" || typeof operation.approvalExpiresAt !== "string") throw new Error("Corrupt mission operation record.");
+      assertIdentifier(operation.approvalNonce, "approval nonce");
+      if (!Number.isFinite(Date.parse(operation.approvalExpiresAt))) throw new Error("Corrupt mission operation record.");
       if (operation.state === "committed") assertMissionPromotionResult(operation.result);
       else if (operation.state === "in_progress") assertPromotionRetryToken(operation.token);
     }

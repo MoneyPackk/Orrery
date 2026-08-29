@@ -8,4 +8,5 @@ export * from "./mission-authority";
 export * from "./public-mission";
 export * from "./promotion-approval";
 export * from "./repository-registry";
+export * from "./review-content";
 export * from "./server";

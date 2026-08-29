@@ -28,6 +28,7 @@ export interface PromotionInput {
   planRevisionId: string;
   changeSnapshot: ChangeSnapshot;
   reviewerId: string;
+  approvalExpiresAt: string;
   decision: "accepted" | "rejected";
 }
 

@@ -177,7 +177,7 @@ describe("DaemonServer", () => {
       create: vi.fn(async () => snapshot),
       run: vi.fn(async () => ({ mission: snapshot, runId: "run-1", status: "running", workspace: {}, changeSnapshot: {} })),
       cancel: vi.fn(async () => snapshot),
-      inspect: vi.fn(async () => ({ mission: snapshot, workspace: {}, changeSnapshot: {}, planRevisionId: "plan-1" })),
+      inspect: vi.fn(async () => ({ mission: snapshot, workspace: {}, changeSnapshot: { revision: "change-1", files: [] }, planRevisionId: "plan-1" })),
       promote: vi.fn(async () => ({ mission: snapshot, result: { status: "promoted", revision: "target-2" }, reviewerId: "trusted-reviewer" })),
     } as unknown as MissionAuthority;
     const { endpoint, token } = await start({ authority, eventSource: new DurableEventSource([]) });
@@ -198,7 +198,7 @@ describe("DaemonServer", () => {
     await expect(connection.next()).resolves.toMatchObject({ type: "mission_cancelled", runId: "run-1" });
     connection.send({ type: "inspect_mission", version: "mission-control.v1", requestId: "inspect", missionId: mission.id, planRevisionId: mission.plan.id });
     await expect(connection.next()).resolves.toMatchObject({ type: "mission_inspection", planRevisionId: mission.plan.id });
-    connection.send({ type: "promote_mission", version: "mission-control.v1", requestId: "promote", intentId: "promote-intent", missionId: mission.id, planRevisionId: mission.plan.id, changeRevision: "change-1", decision: "accepted", approvalCapability: "capability-1" });
+    connection.send({ type: "promote_mission", version: "mission-control.v1", requestId: "promote", intentId: "promote-intent", missionId: mission.id, planRevisionId: mission.plan.id, changeRevision: "change-1", contentDigest: "a".repeat(64), decision: "accepted", approvalCapability: "capability-1" });
     await expect(connection.next()).resolves.toMatchObject({ type: "mission_promotion", result: "promoted" });
     expect(authority.create).toHaveBeenNthCalledWith(2, expect.objectContaining({ intentId: "create-intent" }));
 

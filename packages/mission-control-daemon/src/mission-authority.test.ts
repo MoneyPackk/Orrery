@@ -12,7 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { MissionEventStore, MissionStore, RepositoryRegistry } from "./authority-ports";
 import type { ApprovedRepository, MissionEventRecord, MissionOperation, MissionSnapshot } from "./authority-types";
 import { MissionAuthority, type MissionAuthorityOptions, type VerificationCommandContext } from "./mission-authority";
-import { TrustedApprovalService } from "./promotion-approval";
+import { PinnedApprovalVerifier, TrustedApprovalService, approvalPrincipal } from "./promotion-approval";
+import { digestReviewContent } from "./review-content";
 
 const repository: ApprovedRepository = {
   repositoryId: "repository-1",
@@ -39,12 +40,21 @@ const changes: ChangeSnapshot = {
   files: [{ path: "change.txt", additions: 1, deletions: 0, binary: false, diff: "+change" }],
   unifiedDiff: "+change",
 };
+const contentDigestFor = (mission: MissionSnapshot) => digestReviewContent({ changes: changes.files, evidence: mission.evidence.filter((item) => item.planRevisionId === mission.plan.id) });
 
-function setup() {
+function setup(now: () => string = () => "2026-08-28T11:00:00.000Z") {
   const snapshots = new Map<string, MissionSnapshot>();
   const records = new Map<string, MissionEventRecord[]>();
   const listeners = new Map<string, Set<(event: MissionEventRecord) => void>>();
   const order: string[] = [];
+  const saveMission: MissionStore["save"] = async (snapshot, events) => {
+    snapshots.set(snapshot.id, structuredClone(snapshot));
+    const history = records.get(snapshot.id) ?? [];
+    history.push(...structuredClone(events));
+    records.set(snapshot.id, history);
+    order.push(`persist:${snapshot.status}`);
+    for (const event of events) { order.push(`publish:${event.kind}`); for (const listener of listeners.get(snapshot.id) ?? []) listener(structuredClone(event)); }
+  };
   const missionStore: MissionStore = {
     create: async (snapshot) => {
       if (snapshots.has(snapshot.id)) throw new Error("exists");
@@ -53,17 +63,7 @@ function setup() {
     },
     load: async (id) => structuredClone(snapshots.get(id) ?? null),
     list: async () => structuredClone([...snapshots.values()]),
-    save: async (snapshot, events) => {
-      snapshots.set(snapshot.id, structuredClone(snapshot));
-      const history = records.get(snapshot.id) ?? [];
-      history.push(...structuredClone(events));
-      records.set(snapshot.id, history);
-      order.push(`persist:${snapshot.status}`);
-      for (const event of events) {
-        order.push(`publish:${event.kind}`);
-        for (const listener of listeners.get(snapshot.id) ?? []) listener(structuredClone(event));
-      }
-    },
+    save: saveMission,
   };
   const eventStore: MissionEventStore = {
     append: async () => { throw new Error("authority must commit events through MissionStore.save"); },
@@ -93,22 +93,23 @@ function setup() {
   };
   const run = vi.fn<(input: RunMissionInput) => Promise<RunMissionResult>>();
   const missionRunner = { run } as unknown as MissionRunner;
-  const preparePromotion = vi.fn(async () => ({ status: "prepared" as const, token: {
-    missionRevision: "mission-revision",
-    expectedTargetRevision: workspace.initialRevision,
-    targetBranch: workspace.targetBranch,
-    workspace,
-    missionParent: workspace.initialRevision,
-    missionTree: "mission-tree",
-  } }));
+  const preparePromotion = vi.fn(async (input: { decision: "accepted" | "rejected" }) => input.decision === "rejected"
+    ? ({ status: "rejected" as const })
+    : ({ status: "prepared" as const, token: {
+        missionRevision: "mission-revision",
+        expectedTargetRevision: workspace.initialRevision,
+        targetBranch: workspace.targetBranch,
+        workspace,
+        missionParent: workspace.initialRevision,
+        missionTree: "mission-tree",
+      } }));
   const commitPromotion = vi.fn(async () => ({ status: "promoted" as const, revision: "target-2" }));
-  const reconcilePromotion = vi.fn(async () => ({ status: "pending" as const }));
+  const reconcilePromotion = vi.fn<() => Promise<import("../../mission-kernel/src").PromotionReconciliation>>(async () => ({ status: "pending" }));
   const promote = vi.fn(async () => ({ status: "promoted" as const, revision: "target-2" }));
   const promotionService = { promote, preparePromotion, commitPromotion, reconcilePromotion } as unknown as PromotionService;
   let nextId = 0;
   const approvals = new TrustedApprovalService({
-    reviewerId: () => "trusted-local-reviewer",
-    now: () => "2026-08-28T11:00:00.000Z",
+    now,
     id: () => `approval-${++nextId}`,
   });
   const authority = new MissionAuthority({
@@ -119,8 +120,8 @@ function setup() {
     promotionService,
     workspaceService,
     verificationCommandResolver: async () => ({ executable: "npm", args: ["test"] }),
-    promotionApprovalVerifier: approvals,
-    now: () => "2026-08-28T11:00:00.000Z",
+    promotionApprovalVerifier: new PinnedApprovalVerifier(approvals.publicKey, { now }),
+    now,
     id: () => `generated-${++nextId}`,
   });
   const createInput = {
@@ -131,7 +132,7 @@ function setup() {
     mode: "build" as const,
     plan: { scope: "authority", actions: ["run"], acceptanceCriteria: ["persisted"] },
   };
-  return { approvals, authority, commitPromotion, createInput, eventStore, missionStore, order, preparePromotion, promote, reconcilePromotion, registry, run, snapshots, workspaceService };
+  return { approvals, authority, commitPromotion, createInput, eventStore, missionStore, order, preparePromotion, promote, reconcilePromotion, registry, run, snapshots, workspaceService, saveMission };
 }
 
 async function createReady(setupResult: ReturnType<typeof setup>) {
@@ -155,12 +156,13 @@ describe("MissionAuthority", () => {
   it("requires a bound, unexpired, single-use approval capability and derives reviewer identity from its issuer", async () => {
     const context = setup();
     const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
     expect(context.authority).not.toHaveProperty("issuePromotionApproval");
     const approval = context.approvals.issue({
       missionId: ready.id,
       planRevisionId: ready.plan.id,
       changeRevision: changes.revision,
-      decision: "accepted",
+      decision: "accepted", contentDigest,
     });
 
     await context.authority.promote({
@@ -169,17 +171,17 @@ describe("MissionAuthority", () => {
       planRevisionId: ready.plan.id,
       changeRevision: changes.revision,
       decision: "accepted",
-      approvalCapability: approval,
+      approvalCapability: approval, contentDigest,
     });
 
-    expect(context.preparePromotion).toHaveBeenCalledWith(expect.objectContaining({ reviewerId: "trusted-local-reviewer" }));
+    expect(context.preparePromotion).toHaveBeenCalledWith(expect.objectContaining({ reviewerId: approvalPrincipal(context.approvals.publicKey) }));
     await expect(context.authority.promote({
       intentId: "replay-capability",
       missionId: ready.id,
       planRevisionId: ready.plan.id,
       changeRevision: changes.revision,
       decision: "accepted",
-      approvalCapability: approval,
+      approvalCapability: approval, contentDigest,
     })).rejects.toThrow(/capability.*used/i);
   });
   it("creates and submits a complete plan against a daemon-resolved approved repository", async () => {
@@ -482,17 +484,18 @@ describe("MissionAuthority", () => {
   it("inspects and promotes only the stored workspace and exact reviewed snapshot", async () => {
     const context = setup();
     const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
 
     const inspection = await context.authority.inspect({ missionId: ready.id, planRevisionId: ready.plan.id });
     expect(inspection.changeSnapshot).toEqual(changes);
     expect(context.workspaceService.inspectChanges).toHaveBeenCalledWith(ready.currentWorkspace);
-    const staleApproval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: "other", decision: "accepted" });
-    await expect(context.authority.promote({ intentId: "stale-change", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: "other", approvalCapability: staleApproval, decision: "accepted" }))
+    const staleApproval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: "other", decision: "accepted", contentDigest });
+    await expect(context.authority.promote({ intentId: "stale-change", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: "other", approvalCapability: staleApproval, decision: "accepted", contentDigest }))
       .rejects.toThrow(/change revision/i);
 
-    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted" });
-    const promoted = await context.authority.promote({ intentId: "promote-once", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" });
-    const replayed = await context.authority.promote({ intentId: "promote-once", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" });
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const promoted = await context.authority.promote({ intentId: "promote-once", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted", contentDigest });
+    const replayed = await context.authority.promote({ intentId: "promote-once", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted", contentDigest });
 
     expect(promoted.mission.status).toBe("accepted");
     expect(replayed).toEqual(promoted);
@@ -502,7 +505,7 @@ describe("MissionAuthority", () => {
       workspace: ready.currentWorkspace,
       planRevisionId: ready.plan.id,
       changeSnapshot: changes,
-      reviewerId: "trusted-local-reviewer",
+      reviewerId: approvalPrincipal(context.approvals.publicKey),
       decision: "accepted",
     }));
   });
@@ -510,8 +513,9 @@ describe("MissionAuthority", () => {
   it("replays a prepared promotion after restart without preparing it twice", async () => {
     const context = setup();
     const ready = await createReady(context);
-    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted" });
-    const intent = { intentId: "promote-crash-prepared", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const };
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "promote-crash-prepared", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
     context.commitPromotion.mockRejectedValueOnce(new Error("simulated crash"));
 
     await expect(context.authority.promote(intent)).rejects.toThrow("simulated crash");
@@ -526,11 +530,112 @@ describe("MissionAuthority", () => {
     expect(restarted.commitPromotion).toHaveBeenCalledTimes(1);
   });
 
+  it("fails an in-progress promotion closed after approval expiry across restart", async () => {
+    let now = "2026-08-28T11:00:00.000Z";
+    const context = setup(() => now);
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "promote-expired-restart", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
+    context.commitPromotion.mockRejectedValueOnce(new Error("simulated crash"));
+    await expect(context.authority.promote(intent)).rejects.toThrow("simulated crash");
+
+    now = "2026-08-28T11:01:00.000Z";
+    const restarted = setup(() => now);
+    restarted.snapshots.set(ready.id, structuredClone(context.snapshots.get(ready.id)!));
+
+    await expect(restarted.authority.promote(intent)).rejects.toThrow(/approval expired/i);
+    expect(restarted.reconcilePromotion).not.toHaveBeenCalled();
+    expect(restarted.commitPromotion).not.toHaveBeenCalled();
+    expect(restarted.snapshots.get(ready.id)!.operations![intent.intentId]).toMatchObject({ state: "expired", approvalNonce: expect.any(String) });
+    expect(restarted.snapshots.get(ready.id)!.status).toBe("ready_for_review");
+
+    restarted.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const freshApproval = restarted.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    await expect(restarted.authority.promote({ ...intent, intentId: "promote-after-expiry", approvalCapability: freshApproval })).resolves.toMatchObject({ result: { status: "promoted" } });
+  });
+
+  it("durably commits an explicit rejection from the prepared snapshot and replays it after restart", async () => {
+    const context = setup();
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "rejected", contentDigest });
+    const intent = { intentId: "reject-promotion", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "rejected" as const, contentDigest };
+
+    const rejected = await context.authority.promote(intent);
+
+    expect(rejected).toMatchObject({ mission: { status: "rejected" }, result: { status: "rejected" }, reviewerId: approvalPrincipal(context.approvals.publicKey) });
+    expect(context.preparePromotion).toHaveBeenCalledWith(expect.objectContaining({ decision: "rejected", changeSnapshot: changes }));
+    expect(context.commitPromotion).not.toHaveBeenCalled();
+    expect(context.snapshots.get(ready.id)!.operations![intent.intentId]).toMatchObject({ state: "committed", result: { result: { status: "rejected" } } });
+
+    const restarted = setup();
+    restarted.snapshots.set(ready.id, structuredClone(context.snapshots.get(ready.id)!));
+    await expect(restarted.authority.promote(intent)).resolves.toEqual(rejected);
+    expect(restarted.preparePromotion).not.toHaveBeenCalled();
+    expect(restarted.commitPromotion).not.toHaveBeenCalled();
+  });
+
+  it("does not durably reject when approval expires during async rejection preparation", async () => {
+    let now = "2026-08-28T11:00:00.000Z";
+    const context = setup(() => now);
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "rejected", contentDigest });
+    const intent = { intentId: "reject-expiry-prepare", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "rejected" as const, contentDigest };
+    context.preparePromotion.mockImplementationOnce(async () => {
+      await Promise.resolve();
+      now = "2026-08-28T11:01:00.000Z";
+      return { status: "rejected" as const };
+    });
+
+    await expect(context.authority.promote(intent)).rejects.toThrow(/approval expired/i);
+    expect(context.snapshots.get(ready.id)!.status).toBe("ready_for_review");
+    expect(context.snapshots.get(ready.id)!.operations![intent.intentId]).toMatchObject({ state: "expired" });
+    expect(context.snapshots.get(ready.id)!.intentOutcomes?.[intent.intentId]).toBeUndefined();
+  });
+
+  it("atomically persists the nonce claim before preparing and rejects it after restart", async () => {
+    const context = setup();
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "consume-before-save", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
+    context.missionStore.save = vi.fn(async () => { throw new Error("simulated prepared save crash"); });
+    await expect(context.authority.promote(intent)).rejects.toThrow(/prepared save crash/i);
+    expect(context.preparePromotion).not.toHaveBeenCalled();
+
+    context.missionStore.save = context.saveMission;
+    const restarted = context;
+    restarted.snapshots.set(ready.id, structuredClone(ready));
+    await expect(restarted.authority.promote({ ...intent, intentId: "retry-after-crash" })).resolves.toMatchObject({ result: { status: "promoted" } });
+    const durable = restarted.snapshots.get(ready.id)!;
+    const claim = durable.operations?.["retry-after-crash"];
+    expect(claim).toMatchObject({ approvalNonce: expect.any(String), approvalExpiresAt: expect.any(String) });
+    const secondRestart = context;
+    secondRestart.snapshots.set(ready.id, structuredClone(durable));
+    await expect(secondRestart.authority.promote({ ...intent, intentId: "replay-after-restart" })).rejects.toThrow(/already used/i);
+  });
+
+  it("resumes the same prepared promotion intent after restart without rejecting its own nonce", async () => {
+    const context = setup();
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "prepared-restart", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
+    context.preparePromotion.mockRejectedValueOnce(new Error("crash before kernel preparation"));
+    await expect(context.authority.promote(intent)).rejects.toThrow(/crash before kernel/i);
+    expect(context.snapshots.get(ready.id)!.operations![intent.intentId]).toMatchObject({ state: "prepared", approvalNonce: expect.any(String) });
+    await expect(context.authority.promote(intent)).resolves.toMatchObject({ result: { status: "promoted" } });
+    expect(context.preparePromotion).toHaveBeenCalledTimes(2);
+  });
+
   it("finalizes promotion after restart when the target ref was updated before outcome commit", async () => {
     const context = setup();
     const ready = await createReady(context);
-    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted" });
-    const intent = { intentId: "promote-crash-ref", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const };
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "promote-crash-ref", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
     context.commitPromotion.mockImplementationOnce(async () => {
       context.missionStore.save = vi.fn(async () => { throw new Error("simulated crash"); });
       return { status: "promoted", revision: "target-2" };
@@ -545,5 +650,25 @@ describe("MissionAuthority", () => {
     expect(result.result).toEqual({ status: "promoted", revision: "target-2" });
     expect(restarted.commitPromotion).not.toHaveBeenCalled();
     expect(restarted.snapshots.get(ready.id)!.operations![intent.intentId].state).toBe("committed");
+  });
+
+  it("does not accept a reconciled promotion when approval expires during reconciliation", async () => {
+    let now = "2026-08-28T11:00:00.000Z";
+    const context = setup(() => now);
+    const ready = await createReady(context);
+    const contentDigest = contentDigestFor(ready);
+    const approval = context.approvals.issue({ missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, decision: "accepted", contentDigest });
+    const intent = { intentId: "promote-expiry-reconcile", missionId: ready.id, planRevisionId: ready.plan.id, changeRevision: changes.revision, approvalCapability: approval, decision: "accepted" as const, contentDigest };
+    context.commitPromotion.mockRejectedValueOnce(new Error("simulated crash"));
+    await expect(context.authority.promote(intent)).rejects.toThrow("simulated crash");
+    context.reconcilePromotion.mockImplementationOnce(async () => {
+      now = "2026-08-28T11:01:00.000Z";
+      return { status: "promoted", revision: "target-2" };
+    });
+
+    await expect(context.authority.promote(intent)).rejects.toThrow(/approval expired/i);
+
+    expect(context.snapshots.get(ready.id)!.status).toBe("ready_for_review");
+    expect(context.snapshots.get(ready.id)!.operations![intent.intentId].state).toBe("expired");
   });
 });

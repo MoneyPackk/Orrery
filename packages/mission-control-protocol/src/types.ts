@@ -15,6 +15,10 @@ export interface MissionPlanInput {
   actions: ReadonlyArray<string>;
   acceptanceCriteria: ReadonlyArray<string>;
 }
+export interface MissionReviewContent {
+  readonly changes: ReadonlyArray<{ path: string; additions: number; deletions: number; binary: boolean; diff: string }>;
+  readonly evidence: ReadonlyArray<{ id: string; kind: string; status: string; summary: string; criterion?: string; planRevisionId: string; timestamp: string }>;
+}
 
 export type ClientMutationRequest =
   | { type: "propose_repository"; version: ProtocolVersion; requestId: string; intentId: string; localPath: string }
@@ -23,7 +27,7 @@ export type ClientMutationRequest =
   | { type: "run_mission"; version: ProtocolVersion; requestId: string; intentId: string; missionId: string; planRevisionId: string }
   | { type: "cancel_mission"; version: ProtocolVersion; requestId: string; intentId: string; missionId: string; runId: string }
   | { type: "inspect_mission"; version: ProtocolVersion; requestId: string; missionId: string; planRevisionId: string }
-  | { type: "promote_mission"; version: ProtocolVersion; requestId: string; intentId: string; missionId: string; planRevisionId: string; changeRevision: string; decision: Exclude<ReviewDecision, "revision_requested">; approvalCapability: string };
+  | { type: "promote_mission"; version: ProtocolVersion; requestId: string; intentId: string; missionId: string; planRevisionId: string; changeRevision: string; contentDigest: string; decision: Exclude<ReviewDecision, "revision_requested">; approvalCapability: string };
 
 type ReadOnlyClientRequest =
   | { type: "hello"; version: ProtocolVersion; requestId: string; token: string }
@@ -41,7 +45,7 @@ export type ServerMutationResponse =
   | { type: "mission_created"; version: ProtocolVersion; requestId: string; mission: Mission }
   | { type: "mission_run_accepted"; version: ProtocolVersion; requestId: string; mission: Mission; runId: string }
   | { type: "mission_cancelled"; version: ProtocolVersion; requestId: string; mission: Mission; runId: string }
-  | { type: "mission_inspection"; version: ProtocolVersion; requestId: string; mission: Mission; planRevisionId: string }
+  | { type: "mission_inspection"; version: ProtocolVersion; requestId: string; mission: Mission; planRevisionId: string; changeRevision: string; contentDigest: string; review: MissionReviewContent }
   | { type: "mission_promotion"; version: ProtocolVersion; requestId: string; mission: Mission; planRevisionId: string; changeRevision: string; decision: Exclude<ReviewDecision, "revision_requested">; reviewerId: string; result: "promoted" | "rejected" | "conflict" };
 
 type ReadOnlyServerResponse =

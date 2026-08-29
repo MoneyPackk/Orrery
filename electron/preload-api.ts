@@ -15,7 +15,8 @@ export function createDesktopApi(invoke: Invoke, smokeMode = false): DesktopApi 
       run: (input) => invoke(MISSION_RUN_CHANNEL, input) as ReturnType<DesktopApi["missions"]["run"]>,
       cancel: (input) => invoke(MISSION_CANCEL_CHANNEL, input) as ReturnType<DesktopApi["missions"]["cancel"]>,
       getSnapshot: (input) => invoke(MISSION_GET_SNAPSHOT_CHANNEL, input) as ReturnType<DesktopApi["missions"]["getSnapshot"]>,
-      inspect: (input) => invoke(MISSION_INSPECT_CHANNEL, input) as ReturnType<DesktopApi["missions"]["inspect"]>,
+       inspect: (input) => invoke(MISSION_INSPECT_CHANNEL, input) as ReturnType<DesktopApi["missions"]["inspect"]>,
+       reviewAndPromote: (input) => invoke(MISSION_PROMOTE_CHANNEL, input) as ReturnType<DesktopApi["missions"]["reviewAndPromote"]>,
     },
   };
   if (smokeMode) api.reportSmokeReadiness = (readiness: SmokeReadiness) => invoke(DESKTOP_SMOKE_READY_CHANNEL, readiness).then(() => undefined);

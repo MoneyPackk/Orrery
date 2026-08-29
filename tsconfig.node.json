@@ -34,6 +34,7 @@
       "packages/mission-control-client/src",
       "packages/mission-control-tui/src",
       "scripts/daemon-lifecycle.ts",
+      "scripts/daemon-bootstrap.ts",
       "e2e"
   ]
 }

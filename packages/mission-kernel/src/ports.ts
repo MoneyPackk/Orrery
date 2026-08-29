@@ -28,9 +28,10 @@ export interface WorkspaceService {
     targetBranch: string,
     reviewerId: string,
     reviewedSnapshot: ChangeSnapshot,
+    approvalExpiresAt: string,
   ): Promise<PromotionResult>;
-  promoteRetry(token: PromotionRetryToken, reviewerId: string): Promise<PromotionResult>;
-  reconcilePromotion?(token: PromotionRetryToken): Promise<PromotionReconciliation>;
+  promoteRetry(token: PromotionRetryToken, reviewerId: string, approvalExpiresAt: string): Promise<PromotionResult>;
+  reconcilePromotion?(token: PromotionRetryToken, approvalExpiresAt: string): Promise<PromotionReconciliation>;
 }
 
 export interface CommandRunner {

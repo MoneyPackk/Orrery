@@ -25,6 +25,7 @@ import type {
 } from "./authority-types";
 import type { PromotionApprovalVerifier } from "./promotion-approval";
 import { publicMission } from "./public-mission";
+import { digestReviewContent } from "./review-content";
 
 export interface MissionAuthorityOptions {
   missionStore: MissionStore;
@@ -221,28 +222,43 @@ export class MissionAuthority {
       if (replay) return this.publicPromotionResult(replay.result);
       const pending = this.operation(mission, input.intentId, "promote", digest);
       if (pending?.state === "in_progress") {
-        const reconciled = await this.options.promotionService.reconcilePromotion(pending.token);
-        const result = reconciled.status === "pending" ? await this.options.promotionService.commitPromotion(pending.token, pending.reviewerId) : reconciled;
+        await this.assertPromotionApprovalActive(mission, input.intentId, pending);
+        const reconciled = await this.options.promotionService.reconcilePromotion(pending.token, pending.approvalExpiresAt);
+        await this.assertPromotionApprovalActive(mission, input.intentId, pending);
+        const result = reconciled.status === "pending" ? await this.options.promotionService.commitPromotion(pending.token, pending.reviewerId, pending.approvalExpiresAt) : reconciled;
+        await this.assertPromotionApprovalActive(mission, input.intentId, pending);
         return this.commitPromotion(mission, input.intentId, digest, pending.reviewerId, result);
       }
       if (input.decision !== "accepted" && input.decision !== "rejected") throw new Error("Promotion decision must be accepted or rejected.");
-      const approval = this.options.promotionApprovalVerifier.consume({ capability: input.approvalCapability, missionId: input.missionId, planRevisionId: input.planRevisionId, changeRevision: input.changeRevision, decision: input.decision });
+      const approval = this.options.promotionApprovalVerifier.verify({ capability: input.approvalCapability, missionId: input.missionId, planRevisionId: input.planRevisionId, changeRevision: input.changeRevision, decision: input.decision, contentDigest: input.contentDigest });
+      const nonceOwner = Object.entries(mission.operations ?? {}).find(([, operation]) => operation.operation === "promote" && operation.approvalNonce === approval.nonce);
+      if (nonceOwner && (nonceOwner[0] !== input.intentId || pending?.state !== "prepared" || pending.approvalNonce !== approval.nonce)) throw new Error("Promotion approval capability was already used.");
       this.assertPlan(mission, input.planRevisionId);
       if (!mission.currentWorkspace || !mission.currentChangeSnapshot) throw new Error("Mission has no durable reviewed workspace.");
       if (mission.currentChangeSnapshot.revision !== input.changeRevision) throw new Error("Mission change revision does not match the reviewed snapshot.");
-      await this.options.missionStore.save(this.withOperation(mission, input.intentId, { operation: "promote", requestDigest: digest, state: "prepared", reviewerId: approval.reviewerId }), []);
+      const authoritativeDigest = digestReviewContent({ changes: mission.currentChangeSnapshot.files.map(({ path, additions, deletions, binary, diff }) => ({ path, additions, deletions, binary, diff })), evidence: mission.evidence.filter((item) => item.planRevisionId === input.planRevisionId).map(({ id, kind, status, summary, criterion, planRevisionId, timestamp }) => ({ id, kind, status, summary, ...(criterion === undefined ? {} : { criterion }), planRevisionId, timestamp })) });
+      if (authoritativeDigest !== input.contentDigest) throw new Error("Mission review content digest is stale.");
+      const claimed = pending ?? { operation: "promote" as const, requestDigest: digest, state: "prepared" as const, reviewerId: approval.reviewerId, approvalNonce: approval.nonce, approvalExpiresAt: approval.expiresAt };
+      const preparedSnapshot = pending ? mission : this.withOperation(mission, input.intentId, claimed);
+      if (!pending) await this.options.missionStore.save(preparedSnapshot, []);
+      await this.assertPromotionApprovalActive(preparedSnapshot, input.intentId, claimed);
       const prepared = await this.options.promotionService.preparePromotion({
-        mission,
+        mission: preparedSnapshot,
         workspace: mission.currentWorkspace,
         planRevisionId: input.planRevisionId,
         changeSnapshot: mission.currentChangeSnapshot,
         reviewerId: approval.reviewerId,
+        approvalExpiresAt: approval.expiresAt,
         decision: input.decision,
       });
-      if (prepared.status !== "prepared") return this.commitPromotion(mission, input.intentId, digest, approval.reviewerId, prepared);
-      const inProgress = this.withOperation(mission, input.intentId, { operation: "promote", requestDigest: digest, state: "in_progress", reviewerId: approval.reviewerId, token: prepared.token });
+      await this.assertPromotionApprovalActive(preparedSnapshot, input.intentId, claimed);
+      if (prepared.status !== "prepared") return this.commitPromotion(preparedSnapshot, input.intentId, digest, approval.reviewerId, prepared);
+      await this.assertPromotionApprovalActive(preparedSnapshot, input.intentId, claimed);
+      const inProgress = this.withOperation(preparedSnapshot, input.intentId, { operation: "promote", requestDigest: digest, state: "in_progress", reviewerId: approval.reviewerId, approvalNonce: approval.nonce, approvalExpiresAt: approval.expiresAt, token: prepared.token });
       await this.options.missionStore.save(inProgress, []);
-      const result = await this.options.promotionService.commitPromotion(prepared.token, approval.reviewerId);
+      await this.assertPromotionApprovalActive(inProgress, input.intentId, inProgress.operations![input.intentId] as Extract<MissionOperation, { operation: "promote" }>);
+      const result = await this.options.promotionService.commitPromotion(prepared.token, approval.reviewerId, approval.expiresAt);
+      await this.assertPromotionApprovalActive(inProgress, input.intentId, inProgress.operations![input.intentId] as Extract<MissionOperation, { operation: "promote" }>);
       return this.commitPromotion(inProgress, input.intentId, digest, approval.reviewerId, result);
     });
   }
@@ -258,7 +274,9 @@ export class MissionAuthority {
       const outcome: MissionPromotionResult = { mission: this.publicMission(reviewedSnapshot), result, reviewerId };
       const existing = mission.operations?.[intentId];
       const durableOutcome = { ...outcome, mission: reviewedSnapshot };
-      const committed = this.withOperation(reviewedSnapshot, intentId, { operation: "promote", requestDigest: digest, state: "committed", reviewerId, result: durableOutcome });
+      const prior = mission.operations?.[intentId];
+      if (!prior || prior.operation !== "promote") throw new Error("Promotion approval claim is missing.");
+      const committed = this.withOperation(reviewedSnapshot, intentId, { operation: "promote", requestDigest: digest, state: "committed", reviewerId, approvalNonce: prior.approvalNonce, approvalExpiresAt: prior.approvalExpiresAt, result: durableOutcome });
       await this.options.missionStore.save(this.withOutcome(committed, intentId, { operation: "promote", requestDigest: digest, result: durableOutcome }), []);
       return structuredClone(outcome);
   }
@@ -371,6 +389,21 @@ export class MissionAuthority {
 
   private withOperation(snapshot: MissionSnapshot, intentId: string, operation: MissionOperation): MissionSnapshot {
     return { ...snapshot, operations: { ...snapshot.operations, [intentId]: structuredClone(operation) } };
+  }
+
+  private async assertPromotionApprovalActive(mission: MissionSnapshot, intentId: string, operation: Extract<MissionOperation, { operation: "promote" }>): Promise<void> {
+    if (Date.parse(operation.approvalExpiresAt) > Date.parse(this.now())) return;
+    if (operation.state !== "expired") {
+      await this.options.missionStore.save(this.withOperation(mission, intentId, {
+        operation: "promote",
+        requestDigest: operation.requestDigest,
+        state: "expired",
+        reviewerId: operation.reviewerId,
+        approvalNonce: operation.approvalNonce,
+        approvalExpiresAt: operation.approvalExpiresAt,
+      }), []);
+    }
+    throw new Error("Promotion approval expired before the promotion transaction completed; a fresh approval is required.");
   }
 
   private async commitRun(mission: MissionSnapshot, intentId: string, digest: string, result: PublicRunMissionResult): Promise<PublicRunMissionResult> {

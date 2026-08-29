@@ -17,6 +17,7 @@ const PROMOTION_DECISIONS = ["accepted", "rejected"] as const;
 const PROMOTION_RESULTS = ["promoted", "rejected", "conflict"] as const;
 const FINGERPRINT_LENGTH = 64;
 const APPROVAL_NONCE_LENGTH = 64;
+const SHA256_LENGTH = 64;
 
 function fail(message: string): never {
   throw new Error(`Invalid protocol message: ${message}`);
@@ -59,6 +60,7 @@ function fingerprint(value: unknown): asserts value is string {
 function approvalNonce(value: unknown): asserts value is string {
   if (typeof value !== "string" || !new RegExp(`^[a-f0-9]{${APPROVAL_NONCE_LENGTH}}$`).test(value)) fail("approvalNonce is invalid");
 }
+function digest(value: unknown, name: string): asserts value is string { if (typeof value !== "string" || !new RegExp(`^[a-f0-9]{${SHA256_LENGTH}}$`).test(value)) fail(`${name} is invalid`); }
 
 function member(value: unknown, name: string, allowed: readonly string[]): asserts value is string {
   string(value, name);
@@ -155,7 +157,7 @@ function validateMessage(value: unknown): void {
     case "inspect_mission":
       requestBase(value, ["type", "version", "requestId", "missionId", "planRevisionId"]); nonemptyString(value.missionId, "missionId"); nonemptyString(value.planRevisionId, "planRevisionId"); return;
     case "promote_mission":
-      mutationBase(value, ["type", "version", "requestId", "intentId", "missionId", "planRevisionId", "changeRevision", "decision", "approvalCapability"]); nonemptyString(value.missionId, "missionId"); nonemptyString(value.planRevisionId, "planRevisionId"); nonemptyString(value.changeRevision, "changeRevision"); member(value.decision, "decision", PROMOTION_DECISIONS); nonemptyString(value.approvalCapability, "approvalCapability"); return;
+      mutationBase(value, ["type", "version", "requestId", "intentId", "missionId", "planRevisionId", "changeRevision", "contentDigest", "decision", "approvalCapability"]); nonemptyString(value.missionId, "missionId"); nonemptyString(value.planRevisionId, "planRevisionId"); nonemptyString(value.changeRevision, "changeRevision"); digest(value.contentDigest, "contentDigest"); member(value.decision, "decision", PROMOTION_DECISIONS); nonemptyString(value.approvalCapability, "approvalCapability"); return;
     case "hello_ack": case "pong":
       requestBase(value, ["type", "version", "requestId"]); return;
     case "mission_list":
@@ -171,7 +173,7 @@ function validateMessage(value: unknown): void {
     case "mission_run_accepted": case "mission_cancelled":
       requestBase(value, ["type", "version", "requestId", "mission", "runId"]); validateMission(value.mission); nonemptyString(value.runId, "runId"); return;
     case "mission_inspection":
-      requestBase(value, ["type", "version", "requestId", "mission", "planRevisionId"]); validateMission(value.mission); nonemptyString(value.planRevisionId, "planRevisionId"); return;
+      requestBase(value, ["type", "version", "requestId", "mission", "planRevisionId", "changeRevision", "contentDigest", "review"]); validateMission(value.mission); nonemptyString(value.planRevisionId, "planRevisionId"); nonemptyString(value.changeRevision, "changeRevision"); digest(value.contentDigest, "contentDigest"); validateReview(value.review); return;
     case "mission_promotion":
       requestBase(value, ["type", "version", "requestId", "mission", "planRevisionId", "changeRevision", "decision", "reviewerId", "result"]); validateMission(value.mission); nonemptyString(value.planRevisionId, "planRevisionId"); nonemptyString(value.changeRevision, "changeRevision"); member(value.decision, "decision", PROMOTION_DECISIONS); nonemptyString(value.reviewerId, "reviewerId"); member(value.result, "result", PROMOTION_RESULTS); return;
     case "mission_event":
@@ -184,6 +186,14 @@ function validateMessage(value: unknown): void {
       requestBase(value, ["type", "version", "requestId", "code", "message"]); string(value.code, "code"); string(value.message, "message"); return;
     default: fail(`unknown message type ${type}`);
   }
+}
+
+function validateReview(value: unknown): void {
+  if (!isRecord(value)) fail("review must be an object");
+  exact(value, ["changes", "evidence"]);
+  if (!Array.isArray(value.changes) || !Array.isArray(value.evidence)) fail("review content must use arrays");
+  value.changes.forEach((change) => { if (!isRecord(change)) fail("review change must be an object"); exact(change, ["path", "additions", "deletions", "binary", "diff"]); nonemptyString(change.path, "change path"); integer(change.additions, "change additions"); integer(change.deletions, "change deletions"); if (typeof change.binary !== "boolean") fail("change binary must be boolean"); string(change.diff, "change diff"); });
+  value.evidence.forEach(validateEvidence);
 }
 
 function validateListItem(value: unknown): void {

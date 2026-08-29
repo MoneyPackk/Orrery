@@ -4,6 +4,7 @@ import type { ServerMutationResponse } from "@orrery/mission-control-protocol";
 import type {
   CancelMissionInput, CreateMissionInput, InspectMissionInput,
   PromoteMissionInput, ProposeRepositoryInput, RunMissionInput,
+  ReviewPromotionInput,
 } from "./contract";
 import { isTrustedIpcSender } from "./policy";
 import {
@@ -22,6 +23,7 @@ export interface MissionIpcService {
   cancel(input: CancelMissionInput): Promise<MutationResult<"mission_cancelled">>;
   getSnapshot(input: MissionSnapshotIntent): Promise<Mission>;
   inspect(input: InspectMissionInput): Promise<MutationResult<"mission_inspection">>;
+  reviewAndPromote(input: ReviewPromotionInput): Promise<MutationResult<"mission_promotion">>;
 }
 export interface MissionSnapshotIntent { missionId: string }
 
@@ -69,9 +71,14 @@ function parseInspect(value: unknown): InspectMissionInput {
   return input as unknown as InspectMissionInput;
 }
 function parsePromotion(value: unknown): PromoteMissionInput {
-  const input = record(value, ["intentId", "missionId", "planRevisionId", "changeRevision", "decision", "reviewerId"]);
-  if (!isId(input.intentId) || !isId(input.missionId) || !isId(input.planRevisionId) || !isId(input.changeRevision) || (input.decision !== "accepted" && input.decision !== "rejected") || !isId(input.reviewerId)) return invalid();
+  const input = record(value, ["intentId", "missionId", "planRevisionId", "changeRevision", "decision", "approvalCapability"]);
+  if (!isId(input.intentId) || !isId(input.missionId) || !isId(input.planRevisionId) || !isId(input.changeRevision) || (input.decision !== "accepted" && input.decision !== "rejected") || !isText(input.approvalCapability)) return invalid();
   return input as unknown as PromoteMissionInput;
+}
+function parseReview(value: unknown): ReviewPromotionInput {
+  const input = record(value, ["intentId", "missionId", "planRevisionId", "decision"]);
+  if (!isId(input.intentId) || !isId(input.missionId) || !isId(input.planRevisionId) || (input.decision !== "accepted" && input.decision !== "rejected")) return invalid();
+  return input as unknown as ReviewPromotionInput;
 }
 function isStringArray(value: unknown): value is string[] { return Array.isArray(value) && value.length > 0 && value.length <= 100 && value.every(isText); }
 function assertTrusted(event: IpcMainInvokeEvent, rendererUrl: string): void {
@@ -90,6 +97,7 @@ export function registerMissionIpc(ipcMain: IpcMain, getRendererUrl: () => strin
     [MISSION_CANCEL_CHANNEL, guarded(parseCancel, (input) => service.cancel(input))],
     [MISSION_GET_SNAPSHOT_CHANNEL, guarded(parseSnapshot, (input) => service.getSnapshot(input))],
     [MISSION_INSPECT_CHANNEL, guarded(parseInspect, (input) => service.inspect(input))],
+    [MISSION_PROMOTE_CHANNEL, guarded(parseReview, (input) => service.reviewAndPromote(input))],
   ];
   for (const [channel, handler] of handlers) { ipcMain.removeHandler(channel); ipcMain.handle(channel, handler); }
 }

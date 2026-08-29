@@ -14,6 +14,7 @@ import type { ApprovedRepository, MissionEventRecord, MissionInspectionResult, M
 import type { CancelMissionAuthorityInput, CreateMissionAuthorityInput, InspectMissionAuthorityInput, PromoteMissionAuthorityInput, RunMissionAuthorityInput } from "./authority-types";
 import type { MissionRegistry } from "./mission-registry";
 import { publicMission } from "./public-mission";
+import { reviewContent } from "./review-content";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
@@ -289,7 +290,7 @@ export class DaemonServer {
       }
       case "inspect_mission": {
         const result = await this.requireAuthority().inspect(message);
-        this.send(socket, { type: "mission_inspection", version: PROTOCOL_VERSION, requestId: message.requestId, mission: publicMission(result.mission), planRevisionId: result.planRevisionId });
+        this.send(socket, { type: "mission_inspection", version: PROTOCOL_VERSION, requestId: message.requestId, mission: publicMission(result.mission), planRevisionId: result.planRevisionId, changeRevision: result.changeSnapshot.revision, ...reviewContent(result) });
         return;
       }
       case "promote_mission": {

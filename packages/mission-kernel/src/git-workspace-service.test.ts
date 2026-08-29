@@ -10,6 +10,7 @@ import type { MissionWorkspace, PromotionRetryToken } from "./types";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
+const ACTIVE_APPROVAL_EXPIRY = "2099-01-01T00:00:00.000Z";
 
 function retryToken(missionRevision: string): PromotionRetryToken {
   return {
@@ -330,7 +331,7 @@ describe("GitWorkspaceService", () => {
     });
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
     await service.removeMissionWorkspace(workspace);
@@ -493,7 +494,7 @@ describe("GitWorkspaceService", () => {
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
     await expect(access(markerPath)).rejects.toThrow();
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
     await expect(access(markerPath)).rejects.toThrow();
@@ -515,7 +516,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "nested", "reviewed.txt"), "reviewed\n");
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
     await expect(access(markerPath)).rejects.toThrow();
@@ -529,7 +530,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
     await service.removeMissionWorkspace(workspace);
@@ -547,7 +548,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
 
@@ -567,7 +568,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
 
@@ -595,7 +596,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "worktree.txt"), "reviewed\n");
 
     const reviewedSnapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
 
@@ -608,7 +609,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "promoted\n");
     const reviewedSnapshot = await service.inspectChanges(workspace);
 
-    const result = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    const result = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY);
 
     expect(result.status).toBe("promoted");
     expect((await realGit(["log", "-1", "--format=%s"], repositoryRoot)).stdout.trim()).toContain(
@@ -636,7 +637,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
     const reviewedSnapshot = await service.inspectChanges(workspace);
 
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "promoted",
     });
     await expect(access(markerPath)).rejects.toThrow();
@@ -652,8 +653,74 @@ describe("GitWorkspaceService", () => {
     expect(preparation).toMatchObject({ status: "prepared", token: { expectedTargetRevision: workspace.initialRevision } });
     expect(await serviceRevision(repositoryRoot, "main")).toBe(workspace.initialRevision);
     if (preparation.status !== "prepared") throw new Error("Expected prepared promotion");
-    await expect(service.promoteRetry(preparation.token, "reviewer@example.test")).resolves.toMatchObject({ status: "promoted" });
+    await expect(service.promoteRetry(preparation.token, "reviewer@example.test", "2099-01-01T00:00:00.000Z")).resolves.toMatchObject({ status: "promoted" });
     expect((await realGit(["show", "main:fixture.txt"], repositoryRoot)).stdout.replaceAll("\r\n", "\n")).toBe("reviewed\n");
+  });
+
+  it("does not mutate the target when approval expires before the promotion CAS", async () => {
+    const { repositoryRoot, service, workspace } = await createWorkspace();
+    await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
+    const reviewedSnapshot = await service.inspectChanges(workspace);
+    const preparation = await service.preparePromotion(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    if (preparation.status !== "prepared") throw new Error("Expected prepared promotion");
+
+    await expect(service.promoteRetry(preparation.token, "reviewer@example.test", "2000-01-01T00:00:00.000Z"))
+      .rejects.toThrow(/approval expired/i);
+
+    expect(await serviceRevision(repositoryRoot, "main")).toBe(workspace.initialRevision);
+    expect((await realGit(["show", "main:fixture.txt"], repositoryRoot)).stdout.replaceAll("\r\n", "\n")).toBe("initial\n");
+  });
+
+  it("does not mutate the target when approval expires after the earlier check and before the CAS", async () => {
+    let now = new Date("2099-01-01T00:00:00.000Z");
+    const repositoryRoot = await createRepository();
+    await mkdir(join(repositoryRoot, ".orrery"));
+    const retryRepository = new FilePromotionRetryRepository(repositoryRoot);
+    const baseService = new GitWorkspaceService({ git: realGit, retryRepository });
+    const workspace = await baseService.createMissionWorkspace({ missionId: crypto.randomUUID(), repositoryRoot, targetBranch: "main" });
+    await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
+    const reviewedSnapshot = await new GitWorkspaceService({ git: realGit }).inspectChanges(workspace);
+    const preparation = await baseService.preparePromotion(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    if (preparation.status !== "prepared") throw new Error("Expected prepared promotion");
+    let promotedRevisionRead = false;
+    const racingGit: GitCommand = async (args, cwd, options) => {
+      const result = await realGit(args, cwd, options);
+      if (args.at(-2) === "rev-parse" && args.at(-1) === "HEAD" && cwd.includes("promotion-")) {
+        promotedRevisionRead = true;
+        now = new Date("2100-01-01T00:00:00.000Z");
+      }
+      return result;
+    };
+    const service = new GitWorkspaceService({ git: racingGit, retryRepository, now: () => now });
+
+    await expect(service.promoteRetry(preparation.token, "reviewer@example.test", "2099-01-01T00:01:00.000Z"))
+      .rejects.toThrow(/approval expired/i);
+    expect(promotedRevisionRead).toBe(true);
+    expect(await serviceRevision(repositoryRoot, "main")).toBe(workspace.initialRevision);
+  });
+
+  it("does not let a direct kernel caller omit approval TTL before target mutation", async () => {
+    const { repositoryRoot, service, workspace } = await createWorkspace();
+    await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
+    const reviewedSnapshot = await service.inspectChanges(workspace);
+    const preparation = await service.preparePromotion(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    if (preparation.status !== "prepared") throw new Error("Expected prepared promotion");
+
+    await expect((service.promoteRetry as unknown as (token: PromotionRetryToken, reviewerId: string) => Promise<unknown>)(preparation.token, "reviewer@example.test"))
+      .rejects.toThrow(/approval expiry/i);
+
+    expect(await serviceRevision(repositoryRoot, "main")).toBe(workspace.initialRevision);
+  });
+
+  it("rejects an expired direct reconciliation instead of accepting the target as promoted", async () => {
+    const { service, workspace } = await createWorkspace();
+    await writeFile(join(workspace.worktreePath, "fixture.txt"), "reviewed\n");
+    const reviewedSnapshot = await service.inspectChanges(workspace);
+    const preparation = await service.preparePromotion(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    if (preparation.status !== "prepared") throw new Error("Expected prepared promotion");
+    await service.promoteRetry(preparation.token, "reviewer@example.test", "2099-01-01T00:00:00.000Z");
+
+    await expect(service.reconcilePromotion(preparation.token, "2000-01-01T00:00:00.000Z")).rejects.toThrow(/approval expired/i);
   });
 
   it("refuses worktree content changed between review and staging", async () => {
@@ -669,7 +736,7 @@ describe("GitWorkspaceService", () => {
     };
     const service = new GitWorkspaceService({ git: racingGit });
 
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toEqual({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toEqual({
       status: "conflict",
       reason: "Mission worktree changed after review",
     });
@@ -703,6 +770,7 @@ describe("GitWorkspaceService", () => {
       "main",
       "reviewer@example.test",
       reviewedSnapshot,
+      ACTIVE_APPROVAL_EXPIRY,
     );
 
     expect(result.status).toBe("promoted");
@@ -731,7 +799,7 @@ describe("GitWorkspaceService", () => {
     };
     const service = new GitWorkspaceService({ git: racingGit });
 
-    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot)).resolves.toMatchObject({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
       status: "conflict",
       reason: "Target branch changed during promotion",
     });
@@ -775,6 +843,7 @@ describe("GitWorkspaceService", () => {
         "main",
         "reviewer@example.test",
         reviewedSnapshot,
+        ACTIVE_APPROVAL_EXPIRY,
       ),
     ).resolves.toMatchObject({ status: "conflict", reason: "Target branch changed during promotion" });
     expect(await serviceRevision(repositoryRoot, "main")).toBe(concurrentRevision);
@@ -810,6 +879,7 @@ describe("GitWorkspaceService", () => {
           "main",
           "reviewer@example.test",
           reviewedSnapshot,
+          ACTIVE_APPROVAL_EXPIRY,
         ),
       ).resolves.toMatchObject({ status: "conflict", reason: "Target branch changed during promotion" });
       expect(injected).toBe(true);
@@ -832,7 +902,7 @@ describe("GitWorkspaceService", () => {
     };
     const service = new GitWorkspaceService({ git: failingGit });
 
-    const result = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    const result = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY);
 
     expect(result).toMatchObject({
       status: "conflict",
@@ -865,10 +935,10 @@ describe("GitWorkspaceService", () => {
       },
     });
 
-    const first = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    const first = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY);
     expect(first.status).toBe("conflict");
     if (first.status !== "conflict" || !first.retry) throw new Error("Expected retry token");
-    await expect(service.promoteRetry(first.retry, "reviewer@example.test")).resolves.toMatchObject({ status: "promoted" });
+    await expect(service.promoteRetry(first.retry, "reviewer@example.test", ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({ status: "promoted" });
     expect((await realGit(["show", "main:fixture.txt"], repositoryRoot)).stdout.replaceAll("\r\n", "\n")).toBe("promoted on retry\n");
   });
 
@@ -902,7 +972,7 @@ describe("GitWorkspaceService", () => {
         },
         retryRepository,
       });
-      const first = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+      const first = await service.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY);
       if (first.status !== "conflict" || !first.retry) throw new Error("Expected retry token");
       const movedRevision = await createMovedRevision(repositoryRoot, workspace.initialRevision, movement);
       let injected = false;
@@ -923,7 +993,7 @@ describe("GitWorkspaceService", () => {
         retryRepository,
       });
 
-      await expect(racingService.promoteRetry(first.retry, "reviewer@example.test")).resolves.toMatchObject({
+      await expect(racingService.promoteRetry(first.retry, "reviewer@example.test", ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({
         status: "conflict",
         reason: "Target branch changed during promotion",
       });
@@ -956,14 +1026,14 @@ describe("GitWorkspaceService", () => {
       retryRepository,
     });
 
-    const first = await firstService.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot);
+    const first = await firstService.promote(workspace, "main", "reviewer@example.test", reviewedSnapshot, ACTIVE_APPROVAL_EXPIRY);
     expect(first.status).toBe("conflict");
     if (first.status !== "conflict" || !first.retry) throw new Error("Expected retry token");
 
     const freshService = new GitWorkspaceService({ git: realGit, retryRepository });
-    await expect(freshService.promoteRetry(first.retry, "reviewer@example.test")).resolves.toMatchObject({ status: "promoted" });
+    await expect(freshService.promoteRetry(first.retry, "reviewer@example.test", ACTIVE_APPROVAL_EXPIRY)).resolves.toMatchObject({ status: "promoted" });
     expect(records.size).toBe(0);
-    await expect(freshService.promoteRetry(first.retry, "reviewer@example.test")).rejects.toThrow("unknown or expired");
+    await expect(freshService.promoteRetry(first.retry, "reviewer@example.test", ACTIVE_APPROVAL_EXPIRY)).rejects.toThrow("unknown or expired");
   });
 
   it("rejects an oversized promotion retry registry before parsing", async () => {
@@ -982,7 +1052,7 @@ describe("GitWorkspaceService", () => {
     await writeFile(join(first.workspace.worktreePath, "fixture.txt"), "change\n");
     await writeFile(join(first.repositoryRoot, "uncommitted.txt"), "dirty\n");
     const firstSnapshot = await first.service.inspectChanges(first.workspace);
-    await expect(first.service.promote(first.workspace, "main", "reviewer@example.test", firstSnapshot)).resolves.toEqual({
+    await expect(first.service.promote(first.workspace, "main", "reviewer@example.test", firstSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toEqual({
       status: "conflict",
       reason: "Target branch has uncommitted changes",
     });
@@ -993,7 +1063,7 @@ describe("GitWorkspaceService", () => {
     await realGit(["add", "other.txt"], second.repositoryRoot);
     await realGit(["commit", "-m", "move target"], second.repositoryRoot);
     const secondSnapshot = await second.service.inspectChanges(second.workspace);
-    await expect(second.service.promote(second.workspace, "main", "reviewer@example.test", secondSnapshot)).resolves.toEqual({
+    await expect(second.service.promote(second.workspace, "main", "reviewer@example.test", secondSnapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toEqual({
       status: "conflict",
       reason: "Target branch changed since workspace creation",
     });
@@ -1004,10 +1074,10 @@ describe("GitWorkspaceService", () => {
     const { service, workspace } = await createWorkspace();
 
     const snapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "../main", "reviewer@example.test", snapshot)).rejects.toThrow(
+    await expect(service.promote(workspace, "../main", "reviewer@example.test", snapshot, ACTIVE_APPROVAL_EXPIRY)).rejects.toThrow(
       "targetBranch must be a valid Git branch name",
     );
-    await expect(service.promote(workspace, "main", " ", snapshot)).rejects.toThrow("reviewerId must be a nonempty ID");
+    await expect(service.promote(workspace, "main", " ", snapshot, ACTIVE_APPROVAL_EXPIRY)).rejects.toThrow("reviewerId must be a nonempty ID");
   });
 
   it("does not cherry-pick onto a different checked-out branch", async () => {
@@ -1016,7 +1086,7 @@ describe("GitWorkspaceService", () => {
     await realGit(["switch", "-c", "other"], repositoryRoot);
 
     const snapshot = await service.inspectChanges(workspace);
-    await expect(service.promote(workspace, "main", "reviewer@example.test", snapshot)).resolves.toEqual({
+    await expect(service.promote(workspace, "main", "reviewer@example.test", snapshot, ACTIVE_APPROVAL_EXPIRY)).resolves.toEqual({
       status: "conflict",
       reason: "Target branch is not checked out at the repository root",
     });

@@ -15,6 +15,7 @@ export interface DaemonEndpointMetadata {
   readonly pid: number;
   readonly instanceId: string;
   readonly lockNonce?: string;
+  readonly approvalKeyFingerprint?: string;
 }
 
 export interface RuntimeDirectoryOptions {
@@ -91,7 +92,8 @@ export async function readDaemonEndpoint(path: string): Promise<DaemonEndpointMe
   if ((endpoint.host !== "127.0.0.1" && endpoint.host !== "::1") || typeof endpoint.port !== "number" || !Number.isInteger(endpoint.port) || endpoint.port <= 0 ||
       typeof endpoint.protocol !== "string" || typeof endpoint.tokenPath !== "string" || typeof endpoint.pid !== "number" || !Number.isInteger(endpoint.pid) || endpoint.pid <= 0 ||
       typeof endpoint.instanceId !== "string" || !endpoint.instanceId || endpoint.tokenPath !== expectedTokenPath ||
-      (endpoint.lockNonce !== undefined && (typeof endpoint.lockNonce !== "string" || !endpoint.lockNonce))) throw new Error("Invalid daemon endpoint metadata.");
+      (endpoint.lockNonce !== undefined && (typeof endpoint.lockNonce !== "string" || !endpoint.lockNonce)) ||
+      (endpoint.approvalKeyFingerprint !== undefined && (typeof endpoint.approvalKeyFingerprint !== "string" || !/^[0-9a-f]{64}$/.test(endpoint.approvalKeyFingerprint)))) throw new Error("Invalid daemon endpoint metadata.");
   return Object.freeze(endpoint as DaemonEndpointMetadata);
 }
 
@@ -278,6 +280,7 @@ export async function waitForDaemon(
 
 export interface DaemonChild {
   readonly pid?: number;
+  readonly bootstrapBinding?: Promise<{ instanceId: string; approvalKeyFingerprint: string }>;
   kill(signal?: NodeJS.Signals): boolean;
 }
 
@@ -329,6 +332,10 @@ export async function ensureDaemon(
     child = dependencies.spawn({ nonce: lock.nonce, lockPath: join(dirname(endpointPath), "daemon.lock") });
     signal?.throwIfAborted();
     const endpoint = await abortable((dependencies.waitForReady ?? (() => waitForDaemon(endpointPath)))(), signal);
+    if (child.bootstrapBinding) {
+      const binding = await abortable(child.bootstrapBinding, signal);
+      if (endpoint.instanceId !== binding.instanceId || endpoint.approvalKeyFingerprint !== binding.approvalKeyFingerprint) throw new Error("Managed daemon readiness endpoint does not match its bootstrap challenge.");
+    }
     signal?.throwIfAborted();
     return { endpoint, owned: true, child, lock };
   } catch (error) {

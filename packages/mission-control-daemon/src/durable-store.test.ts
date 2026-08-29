@@ -105,6 +105,7 @@ describe("filesystem mission persistence", () => {
     const store = new FileMissionStore(directory);
     const snapshot: MissionSnapshot = { ...mission("mission-operation"), operations: {
       "run-1": { operation: "run", requestDigest: "a".repeat(64), state: "in_progress", runId: "run-1" },
+      "promote-expired": { operation: "promote", requestDigest: "b".repeat(64), state: "expired", reviewerId: "reviewer-1", approvalNonce: "nonce-1", approvalExpiresAt: "2026-08-29T10:01:00.000Z" },
     } };
     await store.create(snapshot);
 
@@ -152,7 +153,7 @@ describe("filesystem mission persistence", () => {
       { operation: "run", requestDigest: "a".repeat(64), state: "prepared", runId: "run-1", result: runResult },
       { operation: "run", requestDigest: "a".repeat(64), state: "committed", runId: "run-1" },
       { operation: "run", requestDigest: "a".repeat(64), state: "in_progress", runId: "bad run id" },
-      { operation: "promote", requestDigest: "a".repeat(64), state: "prepared", reviewerId: "reviewer-1", token },
+      { operation: "promote", requestDigest: "a".repeat(64), state: "prepared", reviewerId: "reviewer-1", approvalNonce: "nonce-1", approvalExpiresAt: "2026-08-29T10:01:00.000Z", token },
       { operation: "promote", requestDigest: "a".repeat(64), state: "in_progress", reviewerId: "reviewer-1" },
       { operation: "promote", requestDigest: "a".repeat(64), state: "committed", reviewerId: "reviewer-1", token, result: promotionResult },
       { operation: "promote", requestDigest: "a".repeat(64), state: "committed", reviewerId: "bad reviewer", result: promotionResult },

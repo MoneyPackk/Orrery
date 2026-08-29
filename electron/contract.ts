@@ -16,6 +16,7 @@ export type RunMissionInput = RequestInput<"run_mission">;
 export type CancelMissionInput = RequestInput<"cancel_mission">;
 export type InspectMissionInput = RequestInput<"inspect_mission">;
 export type PromoteMissionInput = RequestInput<"promote_mission">;
+export interface ReviewPromotionInput { intentId: string; missionId: string; planRevisionId: string; decision: "accepted" | "rejected" }
 export interface MissionSnapshotIntent { missionId: string }
 export interface MissionApi {
   proposeRepository(input: ProposeRepositoryInput): Promise<MutationResult<"repository_proposal">>;
@@ -24,6 +25,7 @@ export interface MissionApi {
   cancel(input: CancelMissionInput): Promise<MutationResult<"mission_cancelled">>;
   getSnapshot(input: MissionSnapshotIntent): Promise<Mission>;
   inspect(input: InspectMissionInput): Promise<MutationResult<"mission_inspection">>;
+  reviewAndPromote(input: ReviewPromotionInput): Promise<MutationResult<"mission_promotion">>;
 }
 export interface DesktopApi {
   getRuntime(): Promise<DesktopRuntime>;

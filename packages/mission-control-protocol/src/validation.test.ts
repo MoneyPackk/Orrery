@@ -206,13 +206,13 @@ describe("mission control protocol validation", () => {
       { type: "run_mission", version: "mission-control.v1", requestId: "r", intentId: "i", missionId: "mission-1", planRevisionId: "plan-1" },
       { type: "cancel_mission", version: "mission-control.v1", requestId: "x", intentId: "i", missionId: "mission-1", runId: "run-1" },
       { type: "inspect_mission", version: "mission-control.v1", requestId: "n", missionId: "mission-1", planRevisionId: "plan-1" },
-      { type: "promote_mission", version: "mission-control.v1", requestId: "m", intentId: "i", missionId: "mission-1", planRevisionId: "plan-1", changeRevision: "change-1", decision: "accepted", approvalCapability: "capability-1" },
+      { type: "promote_mission", version: "mission-control.v1", requestId: "m", intentId: "i", missionId: "mission-1", planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), decision: "accepted", approvalCapability: "capability-1" },
       { type: "repository_proposal", version: "mission-control.v1", requestId: "p", proposalId: "proposal-1", canonicalRoot: "C:/repo", fingerprint: "a".repeat(64), approvalNonce: "b".repeat(64), expiresAt: "2026-08-28T01:00:00.000Z" },
       { type: "repository_approved", version: "mission-control.v1", requestId: "a", repositoryId: "repo-1", fingerprint: "a".repeat(64) },
       { type: "mission_created", version: "mission-control.v1", requestId: "c", mission },
       { type: "mission_run_accepted", version: "mission-control.v1", requestId: "r", mission, runId: "run-1" },
       { type: "mission_cancelled", version: "mission-control.v1", requestId: "x", mission, runId: "run-1" },
-      { type: "mission_inspection", version: "mission-control.v1", requestId: "n", mission, planRevisionId: "plan-1" },
+      { type: "mission_inspection", version: "mission-control.v1", requestId: "n", mission, planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), review: { changes: [], evidence: [] } },
       { type: "mission_promotion", version: "mission-control.v1", requestId: "m", mission, planRevisionId: "plan-1", changeRevision: "change-1", decision: "accepted", reviewerId: "reviewer-1", result: "promoted" },
     ];
 
@@ -226,7 +226,7 @@ describe("mission control protocol validation", () => {
     expect(() => decodeMessage(JSON.stringify({ ...valid, planRevisionId: "" }))).toThrow(/planRevisionId/i);
     expect(() => decodeMessage(JSON.stringify({ ...valid, intentId: "" }))).toThrow(/intentId/i);
     expect(() => decodeMessage(JSON.stringify({ ...valid, planRevisionId: "x".repeat(65537) }))).toThrow(/bounded|string|large/i);
-    const promotion = { type: "promote_mission", version: "mission-control.v1", requestId: "m", intentId: "i", missionId: "m", planRevisionId: "p", changeRevision: "c", decision: "accepted", approvalCapability: "capability" };
+    const promotion = { type: "promote_mission", version: "mission-control.v1", requestId: "m", intentId: "i", missionId: "m", planRevisionId: "p", changeRevision: "c", contentDigest: "a".repeat(64), decision: "accepted", approvalCapability: "capability" };
     expect(() => decodeMessage(JSON.stringify({ ...promotion, reviewerId: "caller" }))).toThrow(/unknown field/i);
     expect(() => decodeMessage(JSON.stringify({ ...promotion, expiresAt: "2099-01-01T00:00:00.000Z" }))).toThrow(/unknown field/i);
     expect(() => decodeMessage(JSON.stringify({ type: "approve_repository", version: "mission-control.v1", requestId: "a", intentId: "i", proposalId: "p", fingerprint: "", approvalNonce: "n" }))).toThrow(/fingerprint/i);

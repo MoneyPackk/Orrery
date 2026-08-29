@@ -96,7 +96,7 @@ describe("mission kernel ports", () => {
 
     expect(await workspaceService.createMissionWorkspace(createInput)).toBe(workspace);
     expect(await workspaceService.inspectChanges(workspace)).toBe(changeSnapshot);
-    expect(await workspaceService.promote(workspace, "main", "reviewer@example.test", changeSnapshot)).toBe(promotion);
+    expect(await workspaceService.promote(workspace, "main", "reviewer@example.test", changeSnapshot, "2099-01-01T00:00:00.000Z")).toBe(promotion);
     expect(await commandRunner.run(commandInput)).toBe(commandResult);
     expect(await evidenceStore.append(evidenceInput)).toBe(evidence);
     expect(await repository.load("mission-1")).toBe(snapshot);

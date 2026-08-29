@@ -15,7 +15,7 @@ import { MissionControlDaemonClient } from "./mission-control-daemon-client";
 
 let mainWindow: BrowserWindow | null = null;
 let rendererUrl = "";
-const missionClient = new MissionControlDaemonClient();
+const missionClient = new MissionControlDaemonClient({ parentWindow: () => mainWindow });
 
 async function createMainWindow(): Promise<void> {
   const mainEntryPath = fileURLToPath(import.meta.url);

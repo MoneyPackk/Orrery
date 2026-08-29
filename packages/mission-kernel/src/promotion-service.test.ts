@@ -39,7 +39,7 @@ const mission: Mission = {
 };
 
 function input(overrides: Partial<PromotionInput> = {}): PromotionInput {
-  return { mission, workspace, planRevisionId: "plan-1", changeSnapshot: snapshot, reviewerId: "reviewer@example.test", decision: "accepted", ...overrides };
+  return { mission, workspace, planRevisionId: "plan-1", changeSnapshot: snapshot, reviewerId: "reviewer@example.test", approvalExpiresAt: "2099-08-28T11:01:00.000Z", decision: "accepted", ...overrides };
 }
 
 function createPromotionService() {
@@ -98,7 +98,16 @@ describe("PromotionService", () => {
     const { service, promote } = createPromotionService();
 
     await expect(service.promote(input())).resolves.toEqual({ status: "promoted", revision: "target-head-2" });
-  expect(promote).toHaveBeenCalledWith(workspace, "main", "reviewer@example.test", snapshot);
+  expect(promote).toHaveBeenCalledWith(workspace, "main", "reviewer@example.test", snapshot, "2099-08-28T11:01:00.000Z");
+  });
+
+  it("rejects a direct promotion when the approval TTL is omitted", async () => {
+    const { service, promote, inspectChanges } = createPromotionService();
+
+    await expect(service.promote({ ...input(), approvalExpiresAt: undefined } as unknown as PromotionInput)).rejects.toThrow(/approval expiry/i);
+
+    expect(inspectChanges).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
   });
 
   it("prepares an accepted promotion without invoking the target-mutating promotion operation", async () => {
@@ -107,6 +116,14 @@ describe("PromotionService", () => {
     await expect(service.preparePromotion(input())).resolves.toMatchObject({ status: "prepared" });
     expect(preparePromotion).toHaveBeenCalledWith(workspace, "main", "reviewer@example.test", snapshot);
     expect(promote).not.toHaveBeenCalled();
+  });
+
+  it("requires active approval expiry when preparing a rejection", async () => {
+    const { service, preparePromotion } = createPromotionService();
+
+    await expect(service.preparePromotion(input({ decision: "rejected", approvalExpiresAt: "2000-01-01T00:00:00.000Z" })))
+      .rejects.toThrow(/approval expired/i);
+    expect(preparePromotion).not.toHaveBeenCalled();
   });
 
   it("executes a retry token with its immutable mission commit and expected target", async () => {
@@ -119,7 +136,7 @@ describe("PromotionService", () => {
        missionParent: workspace.initialRevision,
        missionTree: "tree-1",
        workspace,
-    }, "reviewer@example.test")).resolves.toEqual({ status: "promoted", revision: "target-head-3" });
+    }, "reviewer@example.test", "2099-08-28T11:01:00.000Z")).resolves.toEqual({ status: "promoted", revision: "target-head-3" });
     expect(promote).not.toHaveBeenCalled();
     expect(promoteRetry).toHaveBeenCalledWith({
       missionRevision: "mission-commit-1",
@@ -128,6 +145,19 @@ describe("PromotionService", () => {
        missionParent: workspace.initialRevision,
        missionTree: "tree-1",
        workspace,
-    }, "reviewer@example.test");
+    }, "reviewer@example.test", "2099-08-28T11:01:00.000Z");
+  });
+
+  it("rejects direct retry and reconciliation calls when approval TTL is omitted", async () => {
+    const { service, promoteRetry } = createPromotionService();
+    const token = {
+      missionRevision: "mission-commit-1", expectedTargetRevision: workspace.initialRevision,
+      targetBranch: workspace.targetBranch, missionParent: workspace.initialRevision,
+      missionTree: "tree-1", workspace,
+    };
+
+    await expect((service.promoteRetry as unknown as (value: unknown, reviewerId: string) => Promise<unknown>)(token, "reviewer@example.test")).rejects.toThrow(/approval expiry/i);
+    await expect((service.reconcilePromotion as unknown as (value: unknown) => Promise<unknown>)(token)).rejects.toThrow(/approval expiry/i);
+    expect(promoteRetry).not.toHaveBeenCalled();
   });
 });

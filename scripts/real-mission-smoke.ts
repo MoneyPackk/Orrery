@@ -158,6 +158,7 @@ try {
     planRevisionId: result.planRevisionId,
     changeSnapshot: result.changeSnapshot,
     reviewerId,
+    approvalExpiresAt: new Date(Date.now() + 60_000).toISOString(),
     decision: "accepted",
   });
   assert(promotion.status === "promoted", `Promotion failed: ${promotion.status}`);

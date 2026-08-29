@@ -22,6 +22,7 @@ export interface GitCommandResult {
 
 export interface GitCommandOptions {
   env?: NodeJS.ProcessEnv;
+  skipConfigInspection?: boolean;
 }
 
 export type GitCommand = (args: string[], cwd: string, options?: GitCommandOptions) => Promise<GitCommandResult>;
@@ -30,6 +31,7 @@ export interface GitWorkspaceServiceOptions {
   git?: GitCommand;
   retryRepository?: PromotionRetryRepository;
   workspaceRoot?: string;
+  now?: () => Date;
 }
 
 interface PromotionRetryLockMetadata {
@@ -208,6 +210,7 @@ function createSafeGit(git: GitCommand, context: SafeGitContext): GitCommand {
   const baseArgs = baseSafeGitArguments(context);
   return async (args, cwd, options) => {
     const env = { ...context.env, ...options?.env };
+    if (options?.skipConfigInspection) return git([...baseArgs, ...args], cwd, { env });
     const config = await git([...baseArgs, "config", "--includes", "--null", "--list"], cwd, { env });
     return git([...baseArgs, ...executableConfigOverrides(config.stdout), ...args], cwd, { env });
   };
@@ -220,10 +223,12 @@ async function applyTargetRevision(
   expectedRevision: string,
   promotedRevision: string,
   options: GitCommandOptions,
+  assertActive: () => void,
 ): Promise<boolean> {
   const targetRef = `refs/heads/${targetBranch}`;
+  assertActive();
   try {
-    await safeGit(["update-ref", targetRef, promotedRevision, expectedRevision], repositoryRoot, options);
+    await safeGit(["update-ref", targetRef, promotedRevision, expectedRevision], repositoryRoot, { ...options, skipConfigInspection: true });
   } catch {
     return false;
   }
@@ -241,11 +246,13 @@ export class GitWorkspaceService implements WorkspaceService {
   private readonly git: GitCommand;
   private readonly retryRepository: PromotionRetryRepository;
   private readonly workspaceRoot: string;
+  private readonly now: () => Date;
 
   constructor(options: GitWorkspaceServiceOptions = {}) {
     this.git = options.git ?? defaultGit;
     this.retryRepository = options.retryRepository ?? new InMemoryPromotionRetryRepository();
     this.workspaceRoot = resolve(options.workspaceRoot ?? defaultWorkspaceRoot());
+    this.now = options.now ?? (() => new Date());
   }
 
   async createMissionWorkspace(input: CreateWorkspaceInput): Promise<MissionWorkspace> {
@@ -405,10 +412,12 @@ export class GitWorkspaceService implements WorkspaceService {
     targetBranch: string,
     reviewerId: string,
     reviewedSnapshot: ChangeSnapshot,
+    approvalExpiresAt: string,
   ): Promise<PromotionResult> {
+    assertApprovalActive(approvalExpiresAt);
     const preparation = await this.preparePromotion(workspace, targetBranch, reviewerId, reviewedSnapshot);
     if (preparation.status !== "prepared") return preparation;
-    return this.promoteRetry(preparation.token, reviewerId);
+    return this.promoteRetry(preparation.token, reviewerId, approvalExpiresAt);
   }
 
   async preparePromotion(
@@ -497,9 +506,10 @@ export class GitWorkspaceService implements WorkspaceService {
     }
   }
 
-  async promoteRetry(token: PromotionRetryToken, reviewerId: string): Promise<PromotionResult> {
+  async promoteRetry(token: PromotionRetryToken, reviewerId: string, approvalExpiresAt: string): Promise<PromotionResult> {
     validateBranch(token.targetBranch);
     assertNonEmptyId(reviewerId, "reviewerId");
+    assertApprovalActive(approvalExpiresAt);
     if (!/^[0-9a-f]{40,64}$/i.test(token.missionRevision) || !/^[0-9a-f]{40,64}$/i.test(token.expectedTargetRevision)) {
       throw new Error("Invalid promotion retry revisions");
     }
@@ -551,14 +561,16 @@ export class GitWorkspaceService implements WorkspaceService {
          return { status: "conflict", reason: error instanceof Error ? error.message : String(error), retry: token };
       }
       const promotedRevision = (await safeGit(["rev-parse", "HEAD"], promotionWorktreePath)).stdout.trim();
+       assertApprovalActive(approvalExpiresAt);
       if (!(await applyTargetRevision(
         safeGit,
         repositoryRoot,
         token.targetBranch,
         targetRevision,
         promotedRevision,
-        isolatedConfig.env,
-      ))) {
+         isolatedConfig.env,
+         () => assertApprovalActive(approvalExpiresAt, this.now),
+       ))) {
         await this.retryRepository.release(token);
         return { status: "conflict", reason: "Target branch changed during promotion", retry: token };
       }
@@ -576,7 +588,8 @@ export class GitWorkspaceService implements WorkspaceService {
     }
   }
 
-  async reconcilePromotion(token: PromotionRetryToken) {
+  async reconcilePromotion(token: PromotionRetryToken, approvalExpiresAt: string) {
+    assertApprovalActive(approvalExpiresAt);
     validateBranch(token.targetBranch);
     const isolatedConfig = await createIsolatedGitEnvironment();
     const safeGit = createSafeGit(this.git, isolatedConfig);
@@ -586,6 +599,7 @@ export class GitWorkspaceService implements WorkspaceService {
       const parents = (await safeGit(["show", "-s", "--format=%P", targetRevision], token.workspace.repositoryRoot)).stdout.trim().split(/\s+/);
       const tree = (await safeGit(["show", "-s", "--format=%T", targetRevision], token.workspace.repositoryRoot)).stdout.trim();
       if (parents.length === 1 && parents[0] === token.expectedTargetRevision && tree === token.missionTree) {
+        assertApprovalActive(approvalExpiresAt);
         return { status: "promoted" as const, revision: targetRevision };
       }
       return { status: "conflict" as const, reason: "Target branch changed since promotion attempt", retry: token };
@@ -593,6 +607,13 @@ export class GitWorkspaceService implements WorkspaceService {
       await rm(isolatedConfig.directory, { recursive: true, force: true }).catch(() => undefined);
     }
   }
+}
+
+function assertApprovalActive(approvalExpiresAt: string, now: () => Date = () => new Date()): void {
+  if (typeof approvalExpiresAt !== "string" || !Number.isFinite(Date.parse(approvalExpiresAt))) {
+    throw new Error("Promotion approval expiry is required and must be valid.");
+  }
+  if (Date.parse(approvalExpiresAt) <= now().getTime()) throw new Error("Promotion approval expired before target mutation.");
 }
 
 class InMemoryPromotionRetryRepository implements PromotionRetryRepository {

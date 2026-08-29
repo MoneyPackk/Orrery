@@ -83,6 +83,7 @@ describe("mission authority ports", () => {
         planRevisionId: "plan-1",
         changeRevision: "change-1",
         approvalCapability: "capability-1",
+        contentDigest: "a".repeat(64),
         decision: "accepted",
       },
     ];

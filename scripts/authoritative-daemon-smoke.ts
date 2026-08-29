@@ -7,6 +7,7 @@ import type { Mission, MissionEvent } from "../packages/mission-control-domain/s
 import { MissionControlClient, TcpLineTransport } from "../packages/mission-control-client/src/index";
 import { DaemonServer, FileMissionStore } from "../packages/mission-control-daemon/src/index";
 import { createDaemonAuthority } from "./daemon-authority-bootstrap";
+import { digestReviewContent } from "../packages/mission-control-daemon/src/review-content";
 
 const execFileAsync = promisify(execFile);
 const longVerificationCommand = { executable: process.execPath, args: ["-e", "setTimeout(() => {}, 30_000)"] };
@@ -158,6 +159,7 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
       planRevisionId: mission.plan.id,
       changeRevision: durableMission.currentChangeSnapshot.revision,
       decision: "accepted",
+      contentDigest: digestReviewContent({ changes: durableMission.currentChangeSnapshot.files, evidence: durableMission.evidence.filter((item) => item.planRevisionId === mission.plan.id) }),
     });
     const promoted = await restarted.promoteMission(ordinary({
       intentId: id("promote"),
@@ -166,6 +168,7 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
       changeRevision: durableMission.currentChangeSnapshot.revision,
       decision: "accepted" as const,
       approvalCapability,
+      contentDigest: digestReviewContent({ changes: durableMission.currentChangeSnapshot.files, evidence: durableMission.evidence.filter((item) => item.planRevisionId === mission.plan.id) }),
     }, repositoryPath));
     const promotedRevision = await revision(repositoryPath);
     const promotedFiles = (await git(["diff", "--name-only", `${initialRevision}..${promotedRevision}`], repositoryPath)).stdout.trim().split(/\r?\n/).filter(Boolean).sort();

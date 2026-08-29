@@ -321,6 +321,24 @@ describe("daemon lifecycle", () => {
     expect(spawned).toEqual(["spawn"]);
   });
 
+  it("rejects readiness metadata from a different bootstrap instance", async () => {
+    await expect(ensureDaemon("endpoint.json", {
+      readEndpoint: async () => { throw new Error("missing"); },
+      acquireLock: async () => ({ nonce: "lock", verify: async () => true, release: async () => undefined }),
+      spawn: () => ({ pid: 4321, kill: () => true, bootstrapBinding: Promise.resolve({ instanceId: "other-instance", approvalKeyFingerprint: "a".repeat(64) }) }),
+      waitForReady: async () => metadata,
+    })).rejects.toThrow(/readiness.*bootstrap/i);
+  });
+
+  it("rejects readiness metadata with a different approval key fingerprint", async () => {
+    await expect(ensureDaemon("endpoint.json", {
+      readEndpoint: async () => { throw new Error("missing"); },
+      acquireLock: async () => ({ nonce: "lock", verify: async () => true, release: async () => undefined }),
+      spawn: () => ({ pid: 4321, kill: () => true, bootstrapBinding: Promise.resolve({ instanceId: metadata.instanceId, approvalKeyFingerprint: "a".repeat(64) }) }),
+      waitForReady: async () => ({ ...metadata, approvalKeyFingerprint: "b".repeat(64) }),
+    })).rejects.toThrow(/readiness.*bootstrap/i);
+  });
+
   it("reuses a ready daemon without acquiring a lock or owning shutdown", async () => {
     const result = await ensureDaemon("endpoint.json", {
       readEndpoint: async () => metadata,

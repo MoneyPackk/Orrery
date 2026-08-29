@@ -56,6 +56,7 @@ function setup(snapshot = mission()) {
     cancel: vi.fn().mockResolvedValue({ mission: snapshot, runId: "run-1" }),
     getSnapshot: vi.fn().mockResolvedValue(snapshot),
     inspect: vi.fn().mockResolvedValue({ mission: snapshot, planRevisionId: "plan-revision-1" }),
+    reviewAndPromote: vi.fn().mockResolvedValue({ mission: snapshot, planRevisionId: "plan-revision-1", changeRevision: "change-1", decision: "accepted", reviewerId: "native", result: "promoted" }),
   };
   registerMissionIpc(ipcMain as never, () => rendererUrl, service);
   const mainFrame = { url: rendererUrl };
@@ -77,6 +78,8 @@ describe("mission IPC", () => {
     await handlers.get(MISSION_CANCEL_CHANNEL)?.(event, { intentId: "intent-cancel", missionId: mission().id, runId: "run-1" });
     await handlers.get(MISSION_GET_SNAPSHOT_CHANNEL)?.(event, { missionId: mission().id });
     await handlers.get(MISSION_INSPECT_CHANNEL)?.(event, { missionId: mission().id, planRevisionId: "plan-revision-1" });
+    const review = { intentId: "intent-review", missionId: mission().id, planRevisionId: "plan-revision-1", decision: "accepted" as const };
+    await handlers.get(MISSION_PROMOTE_CHANNEL)?.(event, review);
 
     expect(service.proposeRepository).toHaveBeenCalledWith(proposal);
     expect(service.create).toHaveBeenCalledWith(create);
@@ -84,6 +87,7 @@ describe("mission IPC", () => {
     expect(service.cancel).toHaveBeenCalledWith({ intentId: "intent-cancel", missionId: mission().id, runId: "run-1" });
     expect(service.getSnapshot).toHaveBeenCalledWith({ missionId: mission().id });
     expect(service.inspect).toHaveBeenCalledWith({ missionId: mission().id, planRevisionId: "plan-revision-1" });
+    expect(service.reviewAndPromote).toHaveBeenCalledWith(review);
   });
 
   it.each([
@@ -113,6 +117,8 @@ describe("mission IPC", () => {
       senderFrame: mainFrame, sender: { mainFrame: { url: "https://attacker.invalid/" } },
     }, payload)).rejects.toThrow("Rejected untrusted mission IPC request");
     expect(service.getSnapshot).not.toHaveBeenCalled();
+    await expect(handlers.get(MISSION_PROMOTE_CHANNEL)?.({ senderFrame: { url: rendererUrl }, sender: { mainFrame } }, { intentId: "review", missionId: mission().id, planRevisionId: "plan-revision-1", decision: "accepted" })).rejects.toThrow("Rejected untrusted mission IPC request");
+    expect(service.reviewAndPromote).not.toHaveBeenCalled();
   });
 
   it("delegates revision and state authority to the daemon service", async () => {

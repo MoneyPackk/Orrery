@@ -63,6 +63,15 @@ describe("daemon authority bootstrap", () => {
     }
   });
 
+  it("keeps promotion unavailable for a standalone or TUI-owned daemon without a pinned key", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "orrery-authority-no-key-"));
+    try {
+      const result = await createDaemonAuthority(join(parent, "runtime"));
+      expect(result).not.toHaveProperty("promotionApprovalIssuer");
+      expect(result.promotionApprovalEnabled).toBe(false);
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
   it("exposes an issuer only for an explicitly injected trusted approval context", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-approval-"));
     try {
