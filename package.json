@@ -1,0 +1,55 @@
+{
+  "name": "orrery-mission-control",
+  "productName": "Orrery Mission Control",
+  "description": "Local-first mission planning, execution, and review desktop shell.",
+  "author": "Orrery",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "desktop:build": "npm run desktop:build:main && npm run desktop:build:preload",
+    "desktop:build:main": "vite build --config vite.main.config.ts",
+    "desktop:build:preload": "vite build --config vite.preload.config.ts",
+    "desktop:dev": "npm run desktop:build && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ORRERY_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "desktop:package": "npm run build && npm run desktop:build && electron-builder --config electron-builder.config.cjs --dir --win",
+    "desktop:smoke": "node scripts/desktop-smoke.mjs",
+    "mission:smoke": "vite-node scripts/real-mission-smoke.ts",
+    "daemon:smoke": "vite-node scripts/authoritative-daemon-smoke.ts",
+    "daemon": "vite-node scripts/orrery-daemon.ts",
+    "tui": "vite-node scripts/orrery-tui.ts",
+    "tui:standalone": "vite-node scripts/orrery-tui-standalone.ts",
+    "desktop:make": "npm run build && npm run desktop:build && electron-builder --config electron-builder.config.cjs",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "cross-env": "10.1.0",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.7",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.4"
+    ,"vite-node": "^3.2.0"
+  }
+}

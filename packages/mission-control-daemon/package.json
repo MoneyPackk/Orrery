@@ -1,0 +1,13 @@
+{
+  "name": "@orrery/mission-control-daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@orrery/mission-control-domain": "0.0.0",
+    "@orrery/mission-control-protocol": "0.0.0"
+  }
+}

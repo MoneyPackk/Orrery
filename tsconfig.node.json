@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@orrery/mission-control-domain": ["packages/mission-control-domain/src/index.ts"],
+      "@orrery/mission-kernel": ["packages/mission-kernel/src/index.ts"],
+      "@orrery/mission-control-protocol": ["packages/mission-control-protocol/src/index.ts"],
+      "@orrery/mission-control-client": ["packages/mission-control-client/src/index.ts"]
+    }
+  },
+  "include": [
+    "vite.config.ts",
+    "vite.main.config.ts",
+    "vite.preload.config.ts",
+    "playwright.config.ts",
+    "electron",
+      "packages/mission-control-domain/src",
+      "packages/mission-kernel/src",
+      "packages/mission-control-protocol/src",
+      "packages/mission-control-daemon/src",
+      "packages/mission-control-client/src",
+      "packages/mission-control-tui/src",
+      "scripts/daemon-lifecycle.ts",
+      "e2e"
+  ]
+}

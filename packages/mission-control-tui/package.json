@@ -1,0 +1,20 @@
+{
+  "name": "@orrery/mission-control-tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./view-model": "./src/view-model.ts"
+  },
+  "engines": {
+    "node": ">=26.4.0"
+  },
+  "dependencies": {
+    "@opentui/core": "0.5.9",
+    "@opentui/keymap": "0.5.9",
+    "@orrery/mission-control-client": "0.0.0",
+    "@orrery/mission-control-domain": "0.0.0",
+    "@orrery/mission-control-protocol": "0.0.0"
+  }
+}

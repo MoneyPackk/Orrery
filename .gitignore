@@ -1,0 +1,28 @@
+node_modules/
+dist/
+dist-electron/
+.vite/
+out/
+release/
+# Disposable desktop and real-mission smoke repositories.
+.tmp/
+playwright-report/
+test-results/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*
+**/credentials/**
+scripts/fixtures/isolated-repo/*
+!scripts/fixtures/isolated-repo/.gitkeep
+# Mission branches keep their linked worktrees here.
+.orrery/
+# Orrery daemon runtime metadata and capability material.
+runtime/
+.orrery-runtime/
