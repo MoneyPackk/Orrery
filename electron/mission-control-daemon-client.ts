@@ -127,6 +127,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
       spawn: (handoff) => {
         if (!this.dependencies.daemonEntryPath) throw new Error("Managed daemon resource path is unavailable.");
         const child = spawn(process.execPath, [this.dependencies.daemonEntryPath, "--electron-promotion-bootstrap"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ORRERY_DAEMON_MANAGED: "1", ORRERY_DAEMON_HANDOFF_NONCE: handoff?.nonce }, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], windowsHide: true });
+        if (process.env.ORRERY_THEIA_SMOKE === "1") child.stderr?.on("data", chunk => console.error(`Managed daemon: ${chunk.toString().trim()}`));
         if (!handoff?.nonce || !child.pid) { child.kill("SIGTERM"); throw new Error("Managed daemon bootstrap pipe is unavailable."); }
         const bootstrapBinding = completeParentBootstrap(child, handoff.nonce, this.approvals.publicKey);
         void bootstrapBinding.catch(() => child.kill("SIGTERM"));

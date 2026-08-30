@@ -236,6 +236,47 @@ describe("daemon lifecycle", () => {
     await expect(readDaemonEndpoint(endpointPath)).resolves.toEqual(ownedMetadata);
     await cleanupDaemonState({ endpointPath, tokenPath: ownedMetadata.tokenPath, lockPath: join(parent, "daemon.lock"), lockNonce: lock?.nonce ?? "", pid: process.pid, instanceId: metadata.instanceId, isProcessAlive: () => false });
     await expect(readDaemonEndpoint(endpointPath)).rejects.toThrow();
+    await lock?.release();
+  });
+
+  it("cleans managed child state using its parent-owned handoff lock", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "orrery-managed-cleanup-"));
+    directories.push(parent);
+    const endpointPath = join(parent, "endpoint.json");
+    const tokenPath = join(parent, "daemon.token");
+    const lockPath = join(parent, "daemon.lock");
+    const parentPid = process.pid;
+    const childPid = process.pid + 1;
+    const lock = await acquireDaemonLock(lockPath);
+    await publishDaemonEndpoint(endpointPath, { ...metadata, pid: childPid, tokenPath });
+
+    await cleanupDaemonState({ endpointPath, tokenPath, lockPath, lockNonce: lock?.nonce ?? "", lockOwnerPid: parentPid, pid: childPid, instanceId: metadata.instanceId, isProcessAlive: () => false });
+
+    await expect(readDaemonEndpoint(endpointPath)).rejects.toThrow();
+    await lock?.release();
+  });
+
+  it("does not clean state when the lock changes before final deletion", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "orrery-cleanup-race-"));
+    directories.push(parent);
+    const paths = endpointPaths(parent);
+    const lock = await acquireDaemonLock(paths.lockPath);
+    const ownedMetadata = { ...metadata, pid: process.pid, tokenPath: paths.tokenPath };
+    await publishDaemonEndpoint(paths.endpointPath, ownedMetadata);
+
+    await cleanupDaemonState({
+      ...paths,
+      lockNonce: lock?.nonce ?? "",
+      pid: process.pid,
+      instanceId: metadata.instanceId,
+      isProcessAlive: () => false,
+      beforeFinalOwnershipCheck: async () => {
+        await lock?.release();
+        await writeFile(paths.lockPath, `${JSON.stringify({ pid: process.pid, nonce: "replacement" })}\n`, "utf8");
+      },
+    });
+
+    await expect(readDaemonEndpoint(paths.endpointPath)).resolves.toEqual(ownedMetadata);
   });
 
   it("does not clean stale state unless it acquires and still proves the startup lock", async () => {

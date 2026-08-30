@@ -2,6 +2,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 import { Container } from "@theia/core/shared/inversify";
 import { ApplicationPackage } from "@theia/application-package";
@@ -50,25 +51,36 @@ describe("isolated Theia Electron host", () => {
     expect(container.get(MissionControlHostService)).toBe(container.get(MissionControlHostService));
   });
 
+  it("installs the extension physically against the host's single Theia core", () => {
+    const require = createRequire(import.meta.url);
+    const extensionPackage = resolve(require.resolve("@orrery/mission-control-theia"), "../../../package.json");
+    const extensionRequire = createRequire(extensionPackage);
+    expect(extensionRequire.resolve("@theia/core/package.json")).toBe(require.resolve("@theia/core/package.json"));
+    expect(readFileSync(extensionPackage, "utf8")).toContain('"@theia/core": "1.75.0"');
+  });
+
   it("uses the exact encoded Theia frontend URL and actual main frame", () => {
     const htmlPath = resolve("C:/Orrery Host/lib/frontend/index.html");
     const expected = pathToFileURL(htmlPath).href;
-    expect(canonicalTheiaRendererUrl({ THEIA_FRONTEND_HTML_PATH: htmlPath })).toBe(expected);
-    const window = fakeWindow(expected);
+    const window = fakeWindow(`${expected}?port=57595`);
     const tracker = new MissionControlWindowTracker(
       { THEIA_FRONTEND_HTML_PATH: htmlPath } as never,
       { getAllWindows: () => [window] } as never
     );
-    expect(tracker.trustedRendererUrl()).toBe(expected);
+    expect(tracker.trustedRendererUrl()).toBe(`${expected}?port=57595`);
+    expect(tracker.parentWindow()).toBe(window);
+    window.webContents.mainFrame.url = `${expected}?port=57595`;
     expect(tracker.parentWindow()).toBe(window);
     window.webContents.mainFrame.url = `${expected}?workspace=test`;
+    expect(tracker.parentWindow()).toBeNull();
+    window.webContents.mainFrame.url = `${expected}?port=57595&workspace=test`;
     expect(tracker.parentWindow()).toBeNull();
     window.webContents.mainFrame.url = "file:///nested.html";
     expect(tracker.parentWindow()).toBeNull();
   });
 
   it("binds each same-URL renderer to its exact originating window regardless of enumeration order", async () => {
-    const url = pathToFileURL(resolve("C:/Orrery Host/lib/frontend/index.html")).href;
+    const url = `${pathToFileURL(resolve("C:/Orrery Host/lib/frontend/index.html")).href}?port=57595`;
     const trusted = fakeWindow(url);
     const impostor = fakeWindow(url);
     const tracker = new MissionControlWindowTracker(
@@ -83,7 +95,7 @@ describe("isolated Theia Electron host", () => {
 
   it("rejects detached and replaced WebContents even when their URL matches", () => {
     const htmlPath = resolve("C:/Orrery Host/lib/frontend/index.html");
-    const url = pathToFileURL(htmlPath).href;
+    const url = `${pathToFileURL(htmlPath).href}?port=57595`;
     const original = fakeWindow(url);
     let windows = [original];
     const tracker = new MissionControlWindowTracker(
@@ -101,7 +113,7 @@ describe("isolated Theia Electron host", () => {
 
   it("binds review to the exact window captured by the IPC request context", async () => {
     const htmlPath = resolve("C:/Orrery Host/lib/frontend/index.html");
-    const url = pathToFileURL(htmlPath).href;
+    const url = `${pathToFileURL(htmlPath).href}?port=57595`;
     const first = fakeWindow(url);
     const second = fakeWindow(url);
     const daemon = { reviewAndPromoteInWindow: vi.fn(async input => input) };

@@ -1,10 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyNativePreparationFailure } from "./smoke-policy.mjs";
-import { waitForTheiaReadiness } from "./smoke-runtime.mjs";
+import { waitForTheiaExit, waitForTheiaReadiness } from "./smoke-runtime.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCli = process.env.npm_execpath;
@@ -12,18 +14,24 @@ if (!npmCli) throw new Error("npm_execpath is required for the Theia smoke.");
 const npmArgs = args => [npmCli, ...args];
 const full = spawnSync(process.execPath, npmArgs(["run", "build:full"]), { cwd: root, encoding: "utf8" });
 if (full.status === 0) {
-  const launch = spawn(process.execPath, npmArgs(["start", "--", "--electronUserData=.tmp/theia-smoke"]), {
+  const smokeRoot = resolve(tmpdir(), "orrery-theia-smoke-");
+  mkdirSync(smokeRoot, { recursive: true });
+  const userData = mkdtempSync(smokeRoot);
+  const launch = spawn(process.execPath, npmArgs(["start", "--", `--electronUserData=${userData}`]), {
     cwd: root,
+    detached: process.platform !== "win32",
     env: { ...process.env, ORRERY_THEIA_SMOKE: "1" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   try {
     await waitForTheiaReadiness(launch, 15_000);
-    launch.kill();
+    await waitForTheiaExit(launch, 15_000);
+    rmSync(userData, { recursive: true, force: true });
     console.log("Theia smoke passed: full build completed and the trusted renderer confirmed host readiness.");
     process.exit(0);
   } catch (error) {
-    launch.kill();
+    terminateProcessTree(launch.pid);
+    rmSync(userData, { recursive: true, force: true });
     throw error;
   }
 } else {
@@ -35,6 +43,25 @@ if (full.status === 0) {
   }
   console.warn(`Theia smoke fallback: real build/launch is unavailable under Node ${process.versions.node} on ${process.platform} (${nativeReason}).`);
   console.warn("Falling back to generated application metadata and DI validation.");
+}
+
+function terminateProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // The process group exited after SIGTERM.
+    }
+  }
 }
 
 const fallback = spawnSync(process.execPath, npmArgs(["run", "build"]), { cwd: root, stdio: "inherit" });

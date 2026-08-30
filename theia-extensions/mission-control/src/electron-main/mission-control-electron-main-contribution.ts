@@ -1,6 +1,6 @@
 import { inject, injectable, optional } from "@theia/core/shared/inversify";
 import type { ElectronMainApplication, ElectronMainApplicationContribution } from "@theia/core/lib/electron-main/electron-main-application";
-import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
+import { app, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
 import {
   MissionControlHostService,
   MISSION_GET_SNAPSHOT_CHANNEL,
@@ -45,7 +45,8 @@ function parseReview(value: unknown): MissionReviewInput {
 }
 
 function trustedContext(event: IpcMainInvokeEvent, host: ElectronMainMissionControlHostService): MissionControlHostRequestContext {
-  const context = event.senderFrame === event.sender.mainFrame ? host.requestContext(event.sender, event.senderFrame) : null;
+  const sameFrame = event.senderFrame === event.sender.mainFrame;
+  const context = sameFrame ? host.requestContext(event.sender, event.senderFrame) : null;
   if (!context) {
     throw new Error("Rejected untrusted mission IPC request");
   }
@@ -72,9 +73,13 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
       return context.reviewAndPromote(parseReview(values[0]));
     }],
     [HOST_READY_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
-      trustedContext(event, host);
+      const context = trustedContext(event, host);
       if (values.length !== 0) throw new Error("Invalid mission IPC payload");
-      if (process.env.ORRERY_THEIA_SMOKE === "1") console.log("ORRERY_THEIA_READY");
+      await host.list();
+      if (process.env.ORRERY_THEIA_SMOKE === "1") {
+        console.log("ORRERY_THEIA_READY");
+        setTimeout(() => app.quit(), 50);
+      }
     }],
   ] as const;
   for (const [channel, handler] of handlers) {

@@ -62,7 +62,7 @@ export async function runDaemon(): Promise<void> {
     stopping = true;
     await authority.authority.shutdown().catch(() => undefined);
     await server.stop().catch(() => undefined);
-    await cleanupDaemonState({ endpointPath: paths.endpointPath, tokenPath: paths.tokenPath, lockPath: paths.lockPath, lockNonce: handoffNonce ?? lock?.nonce ?? "", pid: process.pid, instanceId, isProcessAlive: () => false });
+    await cleanupDaemonState({ endpointPath: paths.endpointPath, tokenPath: paths.tokenPath, lockPath: paths.lockPath, lockNonce: handoffNonce ?? lock?.nonce ?? "", lockOwnerPid: managed ? process.ppid : process.pid, pid: process.pid, instanceId, isProcessAlive: () => false });
     await lock?.release().catch(() => undefined);
   };
   const unregister = registerDaemonCleanup(stop);

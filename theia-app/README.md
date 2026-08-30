@@ -27,7 +27,7 @@ npm run theia-app:test
 npm run theia-app:smoke
 ```
 
-`theia-app:install` builds the extension and installs both isolated graphs with `npm ci --ignore-scripts`. This keeps dependency resolution reproducible on Windows Node `26.3.0`, where Theia's native `drivelist`/ffmpeg addon chain is not buildable. `theia-app:build` still uses installed `@theia/application-package` and `@theia/application-manager` generator APIs to emit the real `src-gen/backend/electron-main.js` and `src-gen/frontend/preload.js` composition metadata.
+`theia-app:install` builds the extension, installs both isolated graphs with `npm ci --ignore-scripts`, and then explicitly rebuilds only Theia's required native modules (`@theia/ffmpeg`, `native-keymap`, and `drivelist`). This keeps lifecycle execution allowlisted and dependency resolution reproducible. On Windows, use Node `24.19.0` or another runtime compatible with the installed MSVC toolchain; Node `26.3.0` currently injects incompatible LLVM LTO flags into these native builds. `theia-app:build` still uses installed `@theia/application-package` and `@theia/application-manager` generator APIs to emit the real `src-gen/backend/electron-main.js` and `src-gen/frontend/preload.js` composition metadata.
 
 `theia-app:smoke` first attempts Theia's full native build and Electron launch. If Node 26.3 on Windows cannot prepare the native Theia addons, it prints the exact failure class and falls back explicitly to generated application metadata, preload/main wiring, DI resolution, renderer identity, singleton, and cleanup validation. A fallback is not reported as a real Electron launch.
 

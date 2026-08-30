@@ -103,7 +103,17 @@ export class MissionControlWindowTracker {
   private isTheiaMainFrame(url: string): boolean {
     try {
       const candidate = new URL(url);
-      return candidate.href === this.frontendUrl;
+      const expected = new URL(this.frontendUrl);
+      const port = candidate.searchParams.get("port");
+      return candidate.protocol === expected.protocol
+        && candidate.host === expected.host
+        && candidate.pathname === expected.pathname
+        && candidate.hash === expected.hash
+        && [...candidate.searchParams.keys()].length === 1
+        && port !== null
+        && /^\d+$/.test(port)
+        && Number(port) > 0
+        && Number(port) <= 65535;
     } catch {
       return false;
     }

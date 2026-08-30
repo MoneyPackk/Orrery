@@ -24,3 +24,19 @@ export function waitForTheiaReadiness(child, timeoutMs) {
     child.once("exit", onExit);
   });
 }
+
+export function waitForTheiaExit(child, timeoutMs) {
+  if (child.exitCode !== null) {
+    return child.exitCode === 0
+      ? Promise.resolve()
+      : Promise.reject(new Error(`Theia Electron exited after readiness with code ${child.exitCode}, signal ${child.signalCode ?? "none"}.`));
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`Theia Electron did not exit after readiness within ${timeoutMs}ms.`)), timeoutMs);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error(`Theia Electron exited after readiness with code ${code}, signal ${signal ?? "none"}.`));
+    });
+  });
+}

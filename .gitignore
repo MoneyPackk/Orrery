@@ -7,6 +7,8 @@ theia-app/host/lib/
 theia-app/src-gen/
 theia-app/lib/
 theia-app/out/
+theia-app/esbuild.mjs
+theia-app/gen-esbuild.*
 theia-app/vendor/*.tgz
 .vite/
 out/

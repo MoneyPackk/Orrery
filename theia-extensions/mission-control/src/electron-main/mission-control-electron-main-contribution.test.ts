@@ -35,7 +35,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
     await handlers.get("mission:v1:host-ready")!(event("file:///theia/index.html") as never);
-    expect(host.list).toHaveBeenCalledOnce();
+    expect(host.list).toHaveBeenCalledTimes(2);
     expect(host.getSnapshot).toHaveBeenCalledWith({ missionId: "mission-1" });
     expect(host.requestContext).toHaveBeenCalledWith(expect.anything(), expect.anything());
   });

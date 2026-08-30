@@ -194,16 +194,20 @@ export async function cleanupDaemonState(options: {
   tokenPath: string;
   lockPath: string;
   lockNonce: string;
+  lockOwnerPid?: number;
   pid: number;
   instanceId: string;
   isProcessAlive: (pid: number) => boolean;
+  beforeFinalOwnershipCheck?: () => Promise<void>;
 }): Promise<void> {
   let endpoint: DaemonEndpointMetadata;
   try { endpoint = await readDaemonEndpoint(options.endpointPath); } catch { return; }
   if (endpoint.pid !== options.pid || endpoint.instanceId !== options.instanceId || endpoint.tokenPath !== join(dirname(options.endpointPath), "daemon.token") ||
-      options.tokenPath !== endpoint.tokenPath || options.isProcessAlive(endpoint.pid) || !(await verifyDaemonLock(options.lockPath, options.lockNonce, options.pid))) return;
+      options.tokenPath !== endpoint.tokenPath || options.isProcessAlive(endpoint.pid) || !(await verifyDaemonLock(options.lockPath, options.lockNonce, options.lockOwnerPid ?? options.pid))) return;
   const current = await readDaemonEndpoint(options.endpointPath).catch(() => undefined);
   if (!current || current.pid !== options.pid || current.instanceId !== options.instanceId || current.tokenPath !== endpoint.tokenPath) return;
+  await options.beforeFinalOwnershipCheck?.();
+  if (!(await verifyDaemonLock(options.lockPath, options.lockNonce, options.lockOwnerPid ?? options.pid))) return;
   await rm(options.endpointPath, { force: true });
   await rm(endpoint.tokenPath, { force: true });
 }
@@ -365,6 +369,18 @@ export async function stopOwnedDaemon(daemon: EnsuredDaemon, timeoutMs = 2_000):
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
     if (child.exitCode === null) child.kill("SIGKILL");
+  }
+  if (daemon.lock) {
+    await cleanupDaemonState({
+      endpointPath: join(dirname(daemon.endpoint.tokenPath), "daemon.json"),
+      tokenPath: daemon.endpoint.tokenPath,
+      lockPath: join(dirname(daemon.endpoint.tokenPath), "daemon.lock"),
+      lockNonce: daemon.lock.nonce,
+      lockOwnerPid: process.pid,
+      pid: daemon.endpoint.pid,
+      instanceId: daemon.endpoint.instanceId,
+      isProcessAlive: () => false,
+    });
   }
   await daemon.lock?.release();
 }
