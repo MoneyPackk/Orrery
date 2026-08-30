@@ -3,6 +3,11 @@ dist/
 dist-electron/
 packages/*/lib/
 theia-extensions/*/lib/
+theia-app/host/lib/
+theia-app/src-gen/
+theia-app/lib/
+theia-app/out/
+theia-app/vendor/*.tgz
 .vite/
 out/
 release/

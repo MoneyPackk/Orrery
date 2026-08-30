@@ -5,7 +5,9 @@ import { registerDesktopIpc } from "./ipc";
 import {
   createWindowOptions,
   installDefaultDenyPermissions,
+  installGracefulShutdown,
   installNavigationPolicy,
+  resolveDaemonEntryPath,
   resolvePreloadPath,
   resolveRendererSource,
 } from "./policy";
@@ -13,12 +15,15 @@ import { isSmokeMode, registerDesktopSmokeIpc } from "./smoke";
 import { registerMissionIpc } from "./mission-ipc";
 import { MissionControlDaemonClient } from "./mission-control-daemon-client";
 
+const mainEntryPath = fileURLToPath(import.meta.url);
 let mainWindow: BrowserWindow | null = null;
 let rendererUrl = "";
-const missionClient = new MissionControlDaemonClient({ parentWindow: () => mainWindow });
+const missionClient = new MissionControlDaemonClient({
+  parentWindow: () => mainWindow,
+  daemonEntryPath: resolveDaemonEntryPath(mainEntryPath),
+});
 
 async function createMainWindow(): Promise<void> {
-  const mainEntryPath = fileURLToPath(import.meta.url);
   const window = new BrowserWindow(createWindowOptions(resolvePreloadPath(mainEntryPath)));
   mainWindow = window;
 
@@ -65,4 +70,4 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => { void missionClient.disconnect(); });
+installGracefulShutdown(app, () => missionClient.disconnect());

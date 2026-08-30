@@ -11,9 +11,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "desktop:build": "npm run desktop:build:main && npm run desktop:build:preload",
+    "desktop:build": "npm run desktop:build:main && npm run desktop:build:preload && npm run desktop:build:daemon",
     "desktop:build:main": "vite build --config vite.main.config.ts",
     "desktop:build:preload": "vite build --config vite.preload.config.ts",
+    "desktop:build:daemon": "vite build --config vite.daemon.config.ts",
     "desktop:dev": "npm run desktop:build && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ORRERY_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "desktop:package": "npm run build && npm run desktop:build && electron-builder --config electron-builder.config.cjs --dir --win",
     "desktop:smoke": "node scripts/desktop-smoke.mjs",
@@ -28,6 +29,11 @@
     "theia:build": "npm --prefix theia-extensions/mission-control run build",
     "theia:typecheck": "npm --prefix theia-extensions/mission-control run typecheck",
     "theia:test": "npm --prefix theia-extensions/mission-control test",
+    "theia-app:install": "node theia-app/scripts/install.mjs",
+    "theia-app:build": "npm --prefix theia-app run build",
+    "theia-app:typecheck": "npm --prefix theia-app run typecheck",
+    "theia-app:test": "npm --prefix theia-app test",
+    "theia-app:smoke": "npm --prefix theia-app run smoke",
     "test": "vitest",
     "test:e2e": "playwright test"
   },

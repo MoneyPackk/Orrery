@@ -2,7 +2,7 @@
 
 Milestone 1 is a standalone executable product specification for Orrery's differentiated mission workflow, with a deterministic packaged Electron smoke test and an explicit Eclipse Theia migration seam. It proves a complete local create, plan, approve, isolated fixture run, guarded permission, evidence, and review loop before these surfaces are mounted into Theia.
 
-The repository now also contains a composable Theia 1.75.0 Mission Control extension. Its package metadata contributes frontend, narrow Electron preload, and Electron-main modules. An assembled Theia host must inject the documented narrow daemon adapter; the package does not claim to be an application distribution.
+The repository now also contains a composable Theia 1.75.0 Mission Control extension and an isolated Theia Electron host under `theia-app/`. The extension contributes frontend, narrow Electron preload, and Electron-main modules; the host supplies the daemon-owning adapter without exposing the root desktop API to Theia.
 
 The reference shell includes:
 
@@ -20,6 +20,7 @@ The browser regression flow remains fixture-backed, while the Node-side mission 
 - [Product design](docs/superpowers/specs/2026-08-27-orrery-design.md)
 - [Mission Control implementation plan](docs/superpowers/plans/2026-08-27-mission-control-slice.md)
 - [Theia extension seam](theia-extensions/mission-control/README.md)
+- [Isolated Theia Electron host](theia-app/README.md)
 - [Real isolated mission kernel design](docs/superpowers/specs/2026-08-28-real-isolated-mission-kernel-design.md)
 - [Daemon and OpenTUI control-plane design](docs/superpowers/specs/2026-08-28-daemon-opentui-control-plane-design.md)
 - [Authoritative mission daemon design](docs/superpowers/specs/2026-08-28-authoritative-mission-daemon-design.md)
@@ -72,6 +73,12 @@ npm run theia:install
 npm run theia:typecheck
 npm run theia:test
 npm run theia:build
+
+# Pack, install, generate, validate, and smoke the isolated Theia Electron host
+npm run theia-app:install
+npm run theia-app:build
+npm run theia-app:test
+npm run theia-app:smoke
 
 # Unit and component tests
 npm test -- --run
@@ -131,5 +138,6 @@ Production hosting must send `Content-Security-Policy: frame-ancestors 'none'` a
 - `scripts/real-mission-smoke.ts`: disposable real Git/worktree kernel smoke.
 - `scripts/authoritative-daemon-smoke.ts`: disposable authenticated authority, replay, cancellation, restart, and promotion smoke.
 - `theia-extensions/mission-control`: self-contained Theia 1.75.0 extension with frontend, preload, and host-injected Electron-main modules.
+- `theia-app`: isolated Theia 1.75.0/Electron 42.8.1 application, packed-extension dependency, and host-only daemon composition.
 - `packages/mission-control-domain`: framework-free domain extraction boundary.
 - `e2e`: Chromium acceptance flow.

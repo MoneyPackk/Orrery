@@ -1,4 +1,4 @@
-import type { BrowserWindowConstructorOptions, Session, WebContents, WebFrameMain } from "electron";
+import type { App, BrowserWindowConstructorOptions, Session, WebContents, WebFrameMain } from "electron";
 import { dirname, join } from "node:path";
 
 export type RendererSource =
@@ -51,6 +51,26 @@ export function resolveRendererSource(
 
 export function resolvePreloadPath(mainEntryPath: string): string {
   return join(dirname(mainEntryPath), "preload.cjs");
+}
+
+export function resolveDaemonEntryPath(mainEntryPath: string): string {
+  return join(dirname(mainEntryPath), "resources", "mission-control-daemon.cjs");
+}
+
+export function installGracefulShutdown(target: Pick<App, "on" | "quit">, cleanup: () => Promise<void>): void {
+  let quitAfterCleanup = false;
+  let pending: Promise<void> | undefined;
+  target.on("before-quit", event => {
+    if (quitAfterCleanup) return;
+    event.preventDefault();
+    pending ??= cleanup().then(() => {
+      quitAfterCleanup = true;
+      target.quit();
+    }, error => {
+      console.error(error);
+      pending = undefined;
+    });
+  });
 }
 
 export function isAllowedNavigation(destination: string, rendererUrl: string): boolean {

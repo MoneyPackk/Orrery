@@ -49,7 +49,7 @@ export default new ContainerModule((bind) => {
 
 `daemonClient` should be one constructed or reused `MissionControlDaemonClient` owned by the assembled Orrery host. The adapter belongs in that host, where daemon lifecycle and the actual Theia `BrowserWindow` are available. The trusted URL resolver must return the exact current main-frame URL after Theia loads it; requests from nested frames or any other URL are rejected. Only validated list/get/review values are delegated.
 
-The existing root Electron host remains the current product path. A future assembled Theia host can reuse its daemon client through this adapter seam without coupling this extension package to root source layout.
+The isolated assembled host now lives in `../../theia-app`. Its host-only Electron-main module supplies this adapter, tracks Theia's actual main frame/window, owns one daemon client, and performs shutdown cleanup. The existing root Electron host remains an independent product path.
 
 ## Verification
 
@@ -58,6 +58,10 @@ npm run theia:install
 npm run theia:typecheck
 npm run theia:test
 npm run theia:build
+npm run theia-app:install
+npm run theia-app:build
+npm run theia-app:test
+npm run theia-app:smoke
 ```
 
 The extension is excluded from the root npm workspace and uses its own lockfile. Tests verify Theia metadata discovery, strict IPC behavior, browser privilege boundaries, package structure, and installation of an `npm pack` tarball from an unrelated temporary consumer.

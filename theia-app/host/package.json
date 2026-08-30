@@ -1,0 +1,21 @@
+{
+  "name": "@orrery/theia-host",
+  "version": "0.0.0",
+  "private": true,
+  "main": "lib/electron-main/mission-control-host-module.js",
+  "types": "lib/electron-main/mission-control-host-module.d.ts",
+  "files": ["lib"],
+  "theiaExtensions": [
+    {
+      "electronMain": "lib/electron-main/mission-control-host-module"
+    }
+  ],
+  "dependencies": {
+    "@orrery/mission-control-theia": "0.0.0",
+    "@theia/core": "1.75.0",
+    "@theia/electron": "1.75.0"
+  },
+  "peerDependencies": {
+    "electron": "42.8.1"
+  }
+}

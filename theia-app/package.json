@@ -1,0 +1,51 @@
+{
+  "name": "@orrery/theia-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated Eclipse Theia Electron host for Orrery Mission Control.",
+  "main": "src-gen/backend/electron-main.js",
+  "scripts": {
+    "clean": "node scripts/application-manager.mjs clean",
+    "build": "npm run build:host && npm run generate",
+    "build:host": "node scripts/build-host.mjs",
+    "build:full": "npm run build:host && node scripts/application-manager.mjs build --mode=development",
+    "generate": "node scripts/generate-application.mjs",
+    "typecheck": "tsc -p host/tsconfig.json --noEmit",
+    "test": "npm run generate && vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "start": "node scripts/application-manager.mjs start"
+  },
+  "dependencies": {
+    "@orrery/mission-control-theia": "file:../theia-extensions/mission-control",
+    "@orrery/theia-host": "file:./host",
+    "@theia/core": "1.75.0",
+    "@theia/electron": "1.75.0"
+  },
+  "devDependencies": {
+    "@theia/application-package": "1.75.0",
+    "@theia/application-manager": "1.75.0",
+    "@types/node": "26.4.0",
+    "electron": "42.8.1",
+    "esbuild": "0.25.9",
+    "typescript": "5.9.2",
+    "vitest": "3.2.7"
+  },
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Orrery Mission Control",
+        "electron": {
+          "windowOptions": {
+            "webPreferences": {
+              "contextIsolation": true,
+              "nodeIntegration": false,
+              "sandbox": true,
+              "webviewTag": false
+            }
+          }
+        }
+      }
+    }
+  }
+}

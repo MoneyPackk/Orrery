@@ -94,6 +94,4 @@ export interface MissionControlPublicApi {
 }
 
 export const MissionControlHostService = Symbol("MissionControlHostService");
-export interface MissionControlHostService extends MissionControlPublicApi {
-  getTrustedRendererUrl(): string;
-}
+export interface MissionControlHostService extends MissionControlPublicApi {}

@@ -7,8 +7,18 @@ import {
   MISSION_LIST_CHANNEL,
   MISSION_REVIEW_CHANNEL,
   type MissionReviewInput,
+  type MissionPromotionResult,
   type MissionSnapshotInput,
 } from "../common/mission-control-contracts";
+
+export interface MissionControlHostRequestContext {
+  reviewAndPromote(input: MissionReviewInput): Promise<MissionPromotionResult>;
+}
+
+export interface ElectronMainMissionControlHostService extends MissionControlHostService {
+  requestContext(sender: object, senderFrame: object | null): MissionControlHostRequestContext | null;
+}
+const HOST_READY_CHANNEL = "mission:v1:host-ready";
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const isId = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 200;
@@ -34,27 +44,38 @@ function parseReview(value: unknown): MissionReviewInput {
   return { intentId: input.intentId, missionId: input.missionId, planRevisionId: input.planRevisionId, decision: input.decision };
 }
 
-function assertTrusted(event: IpcMainInvokeEvent, rendererUrl: string): void {
-  if (!rendererUrl || event.senderFrame !== event.sender.mainFrame || event.senderFrame?.url !== rendererUrl) {
+function trustedContext(event: IpcMainInvokeEvent, host: ElectronMainMissionControlHostService): MissionControlHostRequestContext {
+  const context = event.senderFrame === event.sender.mainFrame ? host.requestContext(event.sender, event.senderFrame) : null;
+  if (!context) {
     throw new Error("Rejected untrusted mission IPC request");
   }
+  return context;
 }
 
-export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "removeHandler">, host: MissionControlHostService): void {
+export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "removeHandler">, host: ElectronMainMissionControlHostService): void {
   const trusted = (invoke: () => unknown) => async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
-    assertTrusted(event, host.getTrustedRendererUrl());
+    trustedContext(event, host);
     if (values.length !== 0) throw new Error("Invalid mission IPC payload");
     return invoke();
   };
   const guarded = <T>(parse: (value: unknown) => T, invoke: (input: T) => unknown) => async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
-    assertTrusted(event, host.getTrustedRendererUrl());
+    trustedContext(event, host);
     if (values.length !== 1) throw new Error("Invalid mission IPC payload");
     return invoke(parse(values[0]));
   };
   const handlers = [
     [MISSION_LIST_CHANNEL, trusted(() => host.list())],
     [MISSION_GET_SNAPSHOT_CHANNEL, guarded(parseSnapshot, (input) => host.getSnapshot(input))],
-    [MISSION_REVIEW_CHANNEL, guarded(parseReview, (input) => host.reviewAndPromote(input))],
+    [MISSION_REVIEW_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      const context = trustedContext(event, host);
+      if (values.length !== 1) throw new Error("Invalid mission IPC payload");
+      return context.reviewAndPromote(parseReview(values[0]));
+    }],
+    [HOST_READY_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      trustedContext(event, host);
+      if (values.length !== 0) throw new Error("Invalid mission IPC payload");
+      if (process.env.ORRERY_THEIA_SMOKE === "1") console.log("ORRERY_THEIA_READY");
+    }],
   ] as const;
   for (const [channel, handler] of handlers) {
     target.removeHandler(channel);
@@ -64,7 +85,7 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
 
 @injectable()
 export class MissionControlElectronMainContribution implements ElectronMainApplicationContribution {
-  constructor(@inject(MissionControlHostService) @optional() private readonly host?: MissionControlHostService) {}
+  constructor(@inject(MissionControlHostService) @optional() private readonly host?: ElectronMainMissionControlHostService) {}
 
   onStart(_application: ElectronMainApplication): void {
     if (!this.host) {

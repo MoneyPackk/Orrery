@@ -33,9 +33,11 @@ describe("Theia Mission Control preload entry point", () => {
     await api.getSnapshot({ missionId: "mission-1" });
     await api.reviewAndPromote({ intentId: "review-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
     expect(electron.invoke.mock.calls).toEqual([
+      ["mission:v1:host-ready"],
       [MISSION_LIST_CHANNEL],
       [MISSION_GET_SNAPSHOT_CHANNEL, { missionId: "mission-1" }],
       [MISSION_REVIEW_CHANNEL, { intentId: "review-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" }],
     ]);
   });
+
 });

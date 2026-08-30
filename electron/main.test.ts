@@ -3,11 +3,13 @@ import {
   createWindowOptions,
   installDefaultDenyPermissions,
   installNavigationPolicy,
+  installGracefulShutdown,
   isAllowedDevServerUrl,
   isAllowedNavigation,
   popupPolicy,
   isTrustedIpcSender,
   resolvePreloadPath,
+  resolveDaemonEntryPath,
   resolveRendererSource,
 } from "./policy";
 
@@ -64,6 +66,51 @@ describe("Electron main security policy", () => {
   it("resolves preload beside the built main entry", () => {
     expect(resolvePreloadPath("C:\\workspace\\dist-electron\\main.js"))
       .toBe("C:\\workspace\\dist-electron\\preload.cjs");
+  });
+
+  it("resolves the managed daemon bundle beside the built main entry", () => {
+    expect(resolveDaemonEntryPath("C:\\workspace\\dist-electron\\main.js"))
+      .toBe("C:\\workspace\\dist-electron\\resources\\mission-control-daemon.cjs");
+  });
+
+  it("delays application quit until daemon cleanup finishes", async () => {
+    let beforeQuit: ((event: { preventDefault(): void }) => void) | undefined;
+    const target = {
+      on: vi.fn((_name, handler) => { beforeQuit = handler; }),
+      quit: vi.fn(),
+    };
+    let finishCleanup!: () => void;
+    const cleanup = vi.fn(() => new Promise<void>(resolve => { finishCleanup = resolve; }));
+    installGracefulShutdown(target as never, cleanup);
+    const event = { preventDefault: vi.fn() };
+
+    beforeQuit?.(event);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(target.quit).not.toHaveBeenCalled();
+    finishCleanup();
+    await vi.waitFor(() => expect(target.quit).toHaveBeenCalledOnce());
+
+    beforeQuit?.({ preventDefault: vi.fn() });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("does not quit when daemon cleanup fails and retries on the next quit request", async () => {
+    let beforeQuit: ((event: { preventDefault(): void }) => void) | undefined;
+    const target = {
+      on: vi.fn((_name, handler) => { beforeQuit = handler; }),
+      quit: vi.fn(),
+    };
+    const cleanup = vi.fn()
+      .mockRejectedValueOnce(new Error("stop failed"))
+      .mockResolvedValueOnce(undefined);
+    installGracefulShutdown(target as never, cleanup);
+
+    beforeQuit?.({ preventDefault: vi.fn() });
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+    expect(target.quit).not.toHaveBeenCalled();
+    beforeQuit?.({ preventDefault: vi.fn() });
+    await vi.waitFor(() => expect(target.quit).toHaveBeenCalledOnce());
+    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
   it("allows only the loaded renderer document to navigate", () => {
