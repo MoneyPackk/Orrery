@@ -1,5 +1,5 @@
 import type { Mission } from "@orrery/mission-control-domain";
-import type { ClientRequest, ServerMutationResponse } from "@orrery/mission-control-protocol";
+import type { ClientRequest, MissionListItem, ServerMutationResponse } from "@orrery/mission-control-protocol";
 
 export interface DesktopRuntime {
   platform: NodeJS.Platform;
@@ -23,6 +23,7 @@ export interface MissionApi {
   create(input: CreateMissionInput): Promise<Mission>;
   run(input: RunMissionInput): Promise<MutationResult<"mission_run_accepted">>;
   cancel(input: CancelMissionInput): Promise<MutationResult<"mission_cancelled">>;
+  list(): Promise<ReadonlyArray<MissionListItem>>;
   getSnapshot(input: MissionSnapshotIntent): Promise<Mission>;
   inspect(input: InspectMissionInput): Promise<MutationResult<"mission_inspection">>;
   reviewAndPromote(input: ReviewPromotionInput): Promise<MutationResult<"mission_promotion">>;

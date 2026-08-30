@@ -24,6 +24,10 @@
     "tui:standalone": "vite-node scripts/orrery-tui-standalone.ts",
     "desktop:make": "npm run build && npm run desktop:build && electron-builder --config electron-builder.config.cjs",
     "typecheck": "tsc -b --pretty false",
+    "theia:install": "npm --prefix theia-extensions/mission-control install --ignore-scripts",
+    "theia:build": "npm --prefix theia-extensions/mission-control run build",
+    "theia:typecheck": "npm --prefix theia-extensions/mission-control run typecheck",
+    "theia:test": "npm --prefix theia-extensions/mission-control test",
     "test": "vitest",
     "test:e2e": "playwright test"
   },

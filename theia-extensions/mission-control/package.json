@@ -1,0 +1,47 @@
+{
+  "name": "@orrery/mission-control-theia",
+  "version": "0.0.0",
+  "main": "lib/common/index.js",
+  "types": "lib/common/index.d.ts",
+  "files": ["lib/common", "lib/browser", "lib/electron-browser", "lib/electron-main"],
+  "exports": {
+    ".": "./lib/common/index.js",
+    "./browser": "./lib/browser/mission-control-frontend-module.js",
+    "./electron-main": "./lib/electron-main/mission-control-electron-main-module.js",
+    "./lib/browser/mission-control-frontend-module": "./lib/browser/mission-control-frontend-module.js",
+    "./lib/electron-browser/mission-control-preload": "./lib/electron-browser/mission-control-preload.js",
+    "./lib/electron-main/mission-control-electron-main-module": "./lib/electron-main/mission-control-electron-main-module.js"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/mission-control-frontend-module",
+      "preload": "lib/electron-browser/mission-control-preload",
+      "electronMain": "lib/electron-main/mission-control-electron-main-module"
+    }
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build",
+    "pretest": "npm run build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@theia/core": "1.75.0",
+    "@theia/electron": "1.75.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.8.0",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "26.4.0",
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "@vitejs/plugin-react": "5.0.2",
+    "electron": "42.8.1",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "3.2.7"
+  }
+}

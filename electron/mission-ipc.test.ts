@@ -5,6 +5,7 @@ import {
   MISSION_CANCEL_CHANNEL,
   MISSION_CREATE_CHANNEL,
   MISSION_GET_SNAPSHOT_CHANNEL,
+  MISSION_LIST_CHANNEL,
   MISSION_INSPECT_CHANNEL,
   MISSION_PROPOSE_REPOSITORY_CHANNEL,
   MISSION_PROMOTE_CHANNEL,
@@ -54,6 +55,7 @@ function setup(snapshot = mission()) {
     create: vi.fn().mockResolvedValue(snapshot),
     run: vi.fn().mockResolvedValue({ mission: snapshot, runId: "run-1" }),
     cancel: vi.fn().mockResolvedValue({ mission: snapshot, runId: "run-1" }),
+    list: vi.fn().mockResolvedValue([{ id: snapshot.id, title: snapshot.title, status: snapshot.status, updatedAt: snapshot.updatedAt }]),
     getSnapshot: vi.fn().mockResolvedValue(snapshot),
     inspect: vi.fn().mockResolvedValue({ mission: snapshot, planRevisionId: "plan-revision-1" }),
     reviewAndPromote: vi.fn().mockResolvedValue({ mission: snapshot, planRevisionId: "plan-revision-1", changeRevision: "change-1", decision: "accepted", reviewerId: "native", result: "promoted" }),
@@ -76,6 +78,7 @@ describe("mission IPC", () => {
     await handlers.get(MISSION_CREATE_CHANNEL)?.(event, create);
     await handlers.get(MISSION_RUN_CHANNEL)?.(event, revisionIntent);
     await handlers.get(MISSION_CANCEL_CHANNEL)?.(event, { intentId: "intent-cancel", missionId: mission().id, runId: "run-1" });
+    await handlers.get(MISSION_LIST_CHANNEL)?.(event);
     await handlers.get(MISSION_GET_SNAPSHOT_CHANNEL)?.(event, { missionId: mission().id });
     await handlers.get(MISSION_INSPECT_CHANNEL)?.(event, { missionId: mission().id, planRevisionId: "plan-revision-1" });
     const review = { intentId: "intent-review", missionId: mission().id, planRevisionId: "plan-revision-1", decision: "accepted" as const };
@@ -85,6 +88,7 @@ describe("mission IPC", () => {
     expect(service.create).toHaveBeenCalledWith(create);
     expect(service.run).toHaveBeenCalledWith(revisionIntent);
     expect(service.cancel).toHaveBeenCalledWith({ intentId: "intent-cancel", missionId: mission().id, runId: "run-1" });
+    expect(service.list).toHaveBeenCalledOnce();
     expect(service.getSnapshot).toHaveBeenCalledWith({ missionId: mission().id });
     expect(service.inspect).toHaveBeenCalledWith({ missionId: mission().id, planRevisionId: "plan-revision-1" });
     expect(service.reviewAndPromote).toHaveBeenCalledWith(review);
@@ -126,5 +130,13 @@ describe("mission IPC", () => {
     const stale = { intentId: "intent-run", missionId: mission().id, planRevisionId: "plan-revision-0" };
     await expect(handlers.get(MISSION_RUN_CHANNEL)?.(event, stale)).resolves.toBeDefined();
     expect(service.run).toHaveBeenCalledWith(stale);
+  });
+
+  it("enforces zero arguments for list and exactly one for get and review", async () => {
+    const { handlers, service, event } = setup();
+    await expect(handlers.get(MISSION_LIST_CHANNEL)?.(event, {})).rejects.toThrow("Invalid mission IPC payload");
+    await expect(handlers.get(MISSION_GET_SNAPSHOT_CHANNEL)?.(event, { missionId: mission().id }, "trailing")).rejects.toThrow("Invalid mission IPC payload");
+    await expect(handlers.get(MISSION_PROMOTE_CHANNEL)?.(event, { intentId: "review", missionId: mission().id, planRevisionId: "plan-revision-1", decision: "accepted" }, "trailing")).rejects.toThrow("Invalid mission IPC payload");
+    expect(service.list).not.toHaveBeenCalled(); expect(service.getSnapshot).not.toHaveBeenCalled(); expect(service.reviewAndPromote).not.toHaveBeenCalled();
   });
 });

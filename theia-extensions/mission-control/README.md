@@ -1,32 +1,63 @@
-# Mission Control Theia Extension Seam
+# Mission Control Theia Extension
 
-This directory reserves the future Theia extension package `@orrery/mission-control-theia`. Milestone 1 adds the boundary only; it does not add Theia to the running product.
+`@orrery/mission-control-theia` is a composable Eclipse Theia `1.75.0` extension. It contributes a Mission Control frontend view, a narrow Electron preload, and an Electron-main contribution. It is an extension package, not a standalone application or distribution.
 
-## Version Contract
+## Package Boundary
 
-The extension will pin, without ranges, every Theia package it consumes:
+The package is self-contained and publishable. Its public mission DTOs live in `src/common/mission-control-contracts.ts`; they intentionally duplicate only the narrow serialized list, snapshot, and promotion shapes needed at the extension boundary. The package has no runtime dependency on Orrery's root packages and no `file:` dependencies.
+
+All consumed Theia packages are pinned exactly:
 
 ```json
 {
   "dependencies": {
-    "@orrery/mission-control-domain": "workspace:*",
-    "@theia/core": "1.75.0"
-  },
-  "devDependencies": {
+    "@theia/core": "1.75.0",
     "@theia/electron": "1.75.0"
   }
 }
 ```
 
-No `^`, `~`, or mixed Theia versions are permitted. The target platform is Eclipse Theia `1.75.0`.
+The extension's isolated Electron dev dependency is `42.8.1`, matching `@theia/electron@1.75.0`'s peer contract. The root Orrery desktop remains independent.
 
-## Planned Boundaries
+## Integration Points
 
-- `common/`: Theia-neutral extension symbols and typed commands only. Mission entities, transitions, runtime events, and invariants come from `@orrery/mission-control-domain`; they are not redefined here.
-- `browser/mission-control-widget.tsx`: `MissionControlWidget extends ReactWidget`, importing `ReactWidget` from `@theia/core/lib/browser/widgets/react-widget`. It adapts Theia lifecycle and shell services to the existing React mission surfaces.
-- `browser/mission-control-widget-factory.ts`: a `WidgetFactory` implementation imported from `@theia/core/lib/browser/widget-manager`. It owns the stable widget ID and creates `MissionControlWidget`; it contains no mission behavior.
-- `browser/mission-control-contribution.ts`: `MissionControlContribution extends AbstractViewContribution<MissionControlWidget>`, importing `AbstractViewContribution` from `@theia/core/lib/browser/shell/view-contribution`. It registers the view command, menu, keybinding, and shell placement.
-- `browser/mission-control-frontend-module.ts`: the browser Inversify container module. It binds the widget, `WidgetFactory`, `AbstractViewContribution`, command/menu/keybinding contributions, and browser-side adapters.
-- `node/mission-control-backend-module.ts`: the Node Inversify container module. It binds future workspace/runtime adapters only; it must not import React, browser widgets, or renderer state.
+Theia `1.75.0`'s installed `@theia/application-package` declares `electronMain` and discovers it through `ApplicationPackage.electronMainModules`. This package declares all three integration points:
 
-The dependency direction is `common <- browser` and `common <- node`. Browser and Node modules never import each other. Both may depend on `@orrery/mission-control-domain`, while the domain package never depends on this extension or any `@theia/*` package.
+- `frontend`: renders the workbench Mission Control view.
+- `preload`: exposes only `window.orreryMissionControl.list`, `getSnapshot`, and `reviewAndPromote` over fixed channels.
+- `electronMain`: registers only those three handlers during `ElectronMainApplicationContribution.onStart`.
+
+Browser code imports no Electron, daemon, kernel, filesystem, process, command, or Git implementation. Electron-main code depends only on Electron IPC, Theia's lifecycle, and the extension-local `MissionControlHostService` contract. It does not import root Electron files or expose generic IPC.
+
+## Assembled Host Adapter
+
+The assembled Orrery Theia application must bind `MissionControlHostService` before Electron-main startup. Missing injection causes startup to fail explicitly rather than leaving a misleading partial tracer:
+
+```ts
+import { ContainerModule } from "@theia/core/shared/inversify";
+import { MissionControlHostService } from "@orrery/mission-control-theia";
+
+export default new ContainerModule((bind) => {
+  bind(MissionControlHostService).toConstantValue({
+    getTrustedRendererUrl: () => assembledTheiaWindow.webContents.mainFrame.url,
+    list: () => daemonClient.list(),
+    getSnapshot: ({ missionId }) => daemonClient.getSnapshot({ missionId }),
+    reviewAndPromote: (input) => daemonClient.reviewAndPromote(input),
+  });
+});
+```
+
+`daemonClient` should be one constructed or reused `MissionControlDaemonClient` owned by the assembled Orrery host. The adapter belongs in that host, where daemon lifecycle and the actual Theia `BrowserWindow` are available. The trusted URL resolver must return the exact current main-frame URL after Theia loads it; requests from nested frames or any other URL are rejected. Only validated list/get/review values are delegated.
+
+The existing root Electron host remains the current product path. A future assembled Theia host can reuse its daemon client through this adapter seam without coupling this extension package to root source layout.
+
+## Verification
+
+```bash
+npm run theia:install
+npm run theia:typecheck
+npm run theia:test
+npm run theia:build
+```
+
+The extension is excluded from the root npm workspace and uses its own lockfile. Tests verify Theia metadata discovery, strict IPC behavior, browser privilege boundaries, package structure, and installation of an `npm pack` tarball from an unrelated temporary consumer.

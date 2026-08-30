@@ -16,6 +16,7 @@ interface SharedClient {
   createMission: MissionIpcService["create"];
   runMission: MissionIpcService["run"];
   cancelMission: MissionIpcService["cancel"];
+  listMissions(): ReturnType<MissionIpcService["list"]>;
   getMission(id: string): ReturnType<MissionIpcService["getSnapshot"]>;
   inspectMission: MissionIpcService["inspect"];
   promoteMission(input: import("./contract").PromoteMissionInput): ReturnType<MissionIpcService["reviewAndPromote"]>;
@@ -40,6 +41,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
   create: MissionIpcService["create"] = async (input) => this.mutate((client) => client.createMission(input));
   run: MissionIpcService["run"] = async (input) => this.mutate((client) => client.runMission(input));
   cancel: MissionIpcService["cancel"] = async (input) => this.mutate((client) => client.cancelMission(input));
+  list = async () => (await this.connected()).listMissions();
   getSnapshot = async (input: MissionSnapshotIntent) => (await this.connected()).getMission(input.missionId);
   inspect: MissionIpcService["inspect"] = async (input) => (await this.connected()).inspectMission(input);
   reviewAndPromote: MissionIpcService["reviewAndPromote"] = async (input) => {

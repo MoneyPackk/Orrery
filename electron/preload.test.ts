@@ -8,6 +8,7 @@ import {
   MISSION_CANCEL_CHANNEL,
   MISSION_CREATE_CHANNEL,
   MISSION_GET_SNAPSHOT_CHANNEL,
+  MISSION_LIST_CHANNEL,
   MISSION_INSPECT_CHANNEL,
   MISSION_PROPOSE_REPOSITORY_CHANNEL,
   MISSION_PROMOTE_CHANNEL,
@@ -63,6 +64,7 @@ describe("sandboxed preload API", () => {
     await api.missions.create({ intentId: "intent-create", repositoryId: "repository-1", title: "Mission", goal: "Goal", mode: "build", plan: { scope: "Scope", actions: ["Act"], acceptanceCriteria: ["Pass"] } });
     await api.missions.run(revisionIntent);
     await api.missions.cancel({ intentId: "intent-cancel", missionId: "mission-1", runId: "run-1" });
+    await api.missions.list();
     await api.missions.getSnapshot({ missionId: "mission-1" });
     await api.missions.inspect({ missionId: "mission-1", planRevisionId: "plan-1" });
     await api.missions.reviewAndPromote({ intentId: "intent-review", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
@@ -72,6 +74,7 @@ describe("sandboxed preload API", () => {
       [MISSION_CREATE_CHANNEL, { intentId: "intent-create", repositoryId: "repository-1", title: "Mission", goal: "Goal", mode: "build", plan: { scope: "Scope", actions: ["Act"], acceptanceCriteria: ["Pass"] } }],
       [MISSION_RUN_CHANNEL, revisionIntent],
       [MISSION_CANCEL_CHANNEL, { intentId: "intent-cancel", missionId: "mission-1", runId: "run-1" }],
+      [MISSION_LIST_CHANNEL],
       [MISSION_GET_SNAPSHOT_CHANNEL, { missionId: "mission-1" }],
       [MISSION_INSPECT_CHANNEL, { missionId: "mission-1", planRevisionId: "plan-1" }],
       [MISSION_PROMOTE_CHANNEL, { intentId: "intent-review", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" }],

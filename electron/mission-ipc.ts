@@ -8,9 +8,9 @@ import type {
 } from "./contract";
 import { isTrustedIpcSender } from "./policy";
 import {
-  MISSION_APPROVE_REPOSITORY_CHANNEL, MISSION_CANCEL_CHANNEL, MISSION_CREATE_CHANNEL,
-  MISSION_GET_SNAPSHOT_CHANNEL, MISSION_INSPECT_CHANNEL, MISSION_PROMOTE_CHANNEL,
-  MISSION_PROPOSE_REPOSITORY_CHANNEL, MISSION_RUN_CHANNEL,
+    MISSION_APPROVE_REPOSITORY_CHANNEL, MISSION_CANCEL_CHANNEL, MISSION_CREATE_CHANNEL,
+    MISSION_GET_SNAPSHOT_CHANNEL, MISSION_INSPECT_CHANNEL, MISSION_PROMOTE_CHANNEL,
+    MISSION_LIST_CHANNEL, MISSION_PROPOSE_REPOSITORY_CHANNEL, MISSION_RUN_CHANNEL,
 } from "./channels";
 
 export * from "./channels";
@@ -21,6 +21,7 @@ export interface MissionIpcService {
   create(input: CreateMissionInput): Promise<Mission>;
   run(input: RunMissionInput): Promise<MutationResult<"mission_run_accepted">>;
   cancel(input: CancelMissionInput): Promise<MutationResult<"mission_cancelled">>;
+  list(): Promise<ReadonlyArray<import("@orrery/mission-control-protocol").MissionListItem>>;
   getSnapshot(input: MissionSnapshotIntent): Promise<Mission>;
   inspect(input: InspectMissionInput): Promise<MutationResult<"mission_inspection">>;
   reviewAndPromote(input: ReviewPromotionInput): Promise<MutationResult<"mission_promotion">>;
@@ -86,15 +87,22 @@ function assertTrusted(event: IpcMainInvokeEvent, rendererUrl: string): void {
 }
 
 export function registerMissionIpc(ipcMain: IpcMain, getRendererUrl: () => string, service: MissionIpcService): void {
-  const guarded = <T>(parse: (value: unknown) => T, invoke: (input: T) => unknown) => async (event: IpcMainInvokeEvent, value: unknown) => {
+  const trusted = (invoke: () => unknown) => async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
     assertTrusted(event, getRendererUrl());
-    return await invoke(parse(value));
+    if (values.length !== 0) return invalid();
+    return await invoke();
   };
-  const handlers: Array<[string, (event: IpcMainInvokeEvent, value: unknown) => unknown]> = [
+  const guarded = <T>(parse: (value: unknown) => T, invoke: (input: T) => unknown) => async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+    assertTrusted(event, getRendererUrl());
+    if (values.length !== 1) return invalid();
+    return await invoke(parse(values[0]));
+  };
+  const handlers: Array<[string, (event: IpcMainInvokeEvent, ...values: unknown[]) => unknown]> = [
     [MISSION_PROPOSE_REPOSITORY_CHANNEL, guarded(parseProposal, (input) => service.proposeRepository(input))],
     [MISSION_CREATE_CHANNEL, guarded(parseCreate, (input) => service.create(input))],
     [MISSION_RUN_CHANNEL, guarded(parseRun, (input) => service.run(input))],
     [MISSION_CANCEL_CHANNEL, guarded(parseCancel, (input) => service.cancel(input))],
+    [MISSION_LIST_CHANNEL, trusted(() => service.list())],
     [MISSION_GET_SNAPSHOT_CHANNEL, guarded(parseSnapshot, (input) => service.getSnapshot(input))],
     [MISSION_INSPECT_CHANNEL, guarded(parseInspect, (input) => service.inspect(input))],
     [MISSION_PROMOTE_CHANNEL, guarded(parseReview, (input) => service.reviewAndPromote(input))],

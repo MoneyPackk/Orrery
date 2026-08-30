@@ -2,6 +2,8 @@
 
 Milestone 1 is a standalone executable product specification for Orrery's differentiated mission workflow, with a deterministic packaged Electron smoke test and an explicit Eclipse Theia migration seam. It proves a complete local create, plan, approve, isolated fixture run, guarded permission, evidence, and review loop before these surfaces are mounted into Theia.
 
+The repository now also contains a composable Theia 1.75.0 Mission Control extension. Its package metadata contributes frontend, narrow Electron preload, and Electron-main modules. An assembled Theia host must inject the documented narrow daemon adapter; the package does not claim to be an application distribution.
+
 The reference shell includes:
 
 - A framework-independent mission domain with validated transitions and review-readiness invariants.
@@ -65,6 +67,12 @@ The packaged smoke mode is enabled only by `ORRERY_SMOKE_TEST=1`. The launcher s
 # TypeScript project references
 npm run typecheck
 
+# Compile-check and test the Theia 1.75.0 extension tracer
+npm run theia:install
+npm run theia:typecheck
+npm run theia:test
+npm run theia:build
+
 # Unit and component tests
 npm test -- --run
 
@@ -122,6 +130,6 @@ Production hosting must send `Content-Security-Policy: frame-ancestors 'none'` a
 - `scripts/desktop-smoke.mjs`: deterministic packaged Windows smoke launcher.
 - `scripts/real-mission-smoke.ts`: disposable real Git/worktree kernel smoke.
 - `scripts/authoritative-daemon-smoke.ts`: disposable authenticated authority, replay, cancellation, restart, and promotion smoke.
-- `theia-extensions/mission-control`: Theia 1.75.0 browser/common/Node migration boundary.
+- `theia-extensions/mission-control`: self-contained Theia 1.75.0 extension with frontend, preload, and host-injected Electron-main modules.
 - `packages/mission-control-domain`: framework-free domain extraction boundary.
 - `e2e`: Chromium acceptance flow.

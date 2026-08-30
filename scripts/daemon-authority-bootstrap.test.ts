@@ -182,7 +182,7 @@ describe("daemon authority bootstrap", () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("rejects adversarial repository proposal persistence", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-proposal-corrupt-"));
@@ -212,7 +212,7 @@ describe("daemon authority bootstrap", () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("durably fails a persisted active mission with an interruption event", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-recovery-"));

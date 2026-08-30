@@ -5,6 +5,7 @@ export const MISSION_APPROVE_REPOSITORY_CHANNEL = "mission:v1:approve-repository
 export const MISSION_CREATE_CHANNEL = "mission:v1:create";
 export const MISSION_RUN_CHANNEL = "mission:v1:run";
 export const MISSION_CANCEL_CHANNEL = "mission:v1:cancel";
+export const MISSION_LIST_CHANNEL = "mission:v1:list";
 export const MISSION_GET_SNAPSHOT_CHANNEL = "mission:v1:get-snapshot";
 export const MISSION_INSPECT_CHANNEL = "mission:v1:inspect";
 export const MISSION_PROMOTE_CHANNEL = "mission:v1:promote";

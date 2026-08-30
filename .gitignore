@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-electron/
+packages/*/lib/
+theia-extensions/*/lib/
 .vite/
 out/
 release/
