@@ -48,28 +48,38 @@ export async function hardenPrivatePath(
   run: (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }> = async (file, args) => execFileAsync(file, args),
 ): Promise<void> {
   if (platform !== "win32") return;
-  try {
-    const identity = (await run("whoami", [])).stdout.trim();
-    if (!identity) throw new Error("Unable to determine current Windows identity.");
-    const allowed = new Set([identity.toLowerCase(), "system", "nt authority\\system"]);
-    await run("icacls", [path, "/reset"]);
-    await run("icacls", [path, "/inheritance:r"]);
-    const inherited = await run("icacls", [path]);
-    for (const entry of parseAclEntries(`${inherited.stdout}\n${inherited.stderr}`)) {
-      if (allowed.has(entry.identity.toLowerCase())) continue;
-      const removeMode = entry.permissions.includes("(DENY)") ? "/remove" : "/remove:g";
-      try {
-        await run("icacls", [path, removeMode, entry.identity]);
-      } catch (error) {
-        if (!isUnresolvedIdentityRemovalError(error)) throw error;
-      }
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await hardenPrivatePathOnce(path, run);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1)));
     }
-    await run("icacls", [path, "/grant:r", `${identity}:F`, "SYSTEM:F"]);
-    const result = await run("icacls", [path]);
-    assertPrivateAcl(`${result.stdout}\n${result.stderr}`, allowed);
-  } catch (error) {
-    throw new Error(`Unable to apply or verify private ACL for ${path}.`, { cause: error });
   }
+  throw new Error(`Unable to apply or verify private ACL for ${path}.`, { cause: lastError });
+}
+
+async function hardenPrivatePathOnce(path: string, run: (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>): Promise<void> {
+  const identity = (await run("whoami", [])).stdout.trim();
+  if (!identity) throw new Error("Unable to determine current Windows identity.");
+  const allowed = new Set([identity.toLowerCase(), "system", "nt authority\\system"]);
+  await run("icacls", [path, "/reset"]);
+  await run("icacls", [path, "/inheritance:r"]);
+  const inherited = await run("icacls", [path]);
+  for (const entry of parseAclEntries(`${inherited.stdout}\n${inherited.stderr}`)) {
+    if (allowed.has(entry.identity.toLowerCase())) continue;
+    const removeMode = entry.permissions.includes("(DENY)") ? "/remove" : "/remove:g";
+    try {
+      await run("icacls", [path, removeMode, entry.identity]);
+    } catch (error) {
+      if (!isUnresolvedIdentityRemovalError(error)) throw error;
+    }
+  }
+  await run("icacls", [path, "/grant:r", `${identity}:F`, "SYSTEM:F"]);
+  const result = await run("icacls", [path]);
+  assertPrivateAcl(`${result.stdout}\n${result.stderr}`, allowed);
 }
 
 function parseAclEntries(output: string): Array<{ identity: string; permissions: string }> {

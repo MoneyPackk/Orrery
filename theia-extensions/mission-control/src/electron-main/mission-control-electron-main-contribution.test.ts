@@ -17,20 +17,21 @@ describe("Mission Control Theia Electron main contribution", () => {
     expect(() => container.get(MissionControlElectronMainContribution).onStart({} as never)).toThrow(/requires the assembled Theia host to bind MissionControlHostService/);
   });
 
-  it("registers only list, get, and review handlers and delegates validated values", async () => {
+  it("registers only bounded mission handlers and delegates validated values", async () => {
     const handlers = new Map<string, (event: never, value?: unknown) => unknown>();
     const ipcMain = {
       removeHandler: vi.fn((channel: string) => handlers.delete(channel)),
       handle: vi.fn((channel: string, handler: (event: never, value?: unknown) => unknown) => handlers.set(channel, handler)),
     };
     const host = {
-      requestContext: vi.fn(() => ({ reviewAndPromote: vi.fn(async (input) => ({ decision: input.decision })) })),
+      requestContext: vi.fn(() => ({ intakeRepository: vi.fn(), reviewAndPromote: vi.fn(async (input) => ({ decision: input.decision })) })),
+      create: vi.fn(), run: vi.fn(), cancel: vi.fn(), inspect: vi.fn(),
       list: vi.fn(async () => []),
       getSnapshot: vi.fn(async (input) => ({ id: input.missionId })),
     };
 
     registerMissionControlHostIpc(ipcMain as never, host as never);
-    expect([...handlers.keys()]).toEqual(["mission:v1:list", "mission:v1:get-snapshot", "mission:v1:promote", "mission:v1:host-ready"]);
+    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "mission:v1:promote", "mission:v1:host-ready"]);
     await handlers.get("mission:v1:list")!(event("file:///theia/index.html") as never);
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });

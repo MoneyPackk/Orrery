@@ -49,7 +49,7 @@ describe("mission control Theia extension structure", () => {
     const api = read("src/electron-browser/mission-control-preload-api.ts");
     expect(preload).toMatch(/from ["']electron["']/);
     expect(preload).toContain("./mission-control-preload-api");
-    expect(preload + api).not.toMatch(/electron\/preload-api|\.\.\/\.\.\/\.\.\/electron|orreryDesktop|\bcreate\s*:|\brun\s*:|\bcancel\s*:|\binspect\s*:|\binvoke\s*:/i);
+    expect(preload + api).not.toMatch(/electron\/preload-api|\.\.\/\.\.\/\.\.\/electron|orreryDesktop|approveRepository|approvalNonce|approvalCapability|\binvoke\s*:/i);
     expect(api).toContain("reviewAndPromote");
     expect(api).toContain("getSnapshot");
     expect(api).toContain("list");

@@ -27,7 +27,7 @@ describe("Theia Mission Control preload entry point", () => {
     expect(electron.exposeInMainWorld).toHaveBeenCalledTimes(1);
     expect(electron.exposeInMainWorld).toHaveBeenCalledWith("orreryMissionControl", expect.any(Object));
     const api = electron.exposeInMainWorld.mock.calls[0][1];
-    expect(Object.keys(api)).toEqual(["list", "getSnapshot", "reviewAndPromote"]);
+    expect(Object.keys(api)).toEqual(["intakeRepository", "create", "run", "cancel", "list", "getSnapshot", "inspect", "reviewAndPromote"]);
 
     await api.list();
     await api.getSnapshot({ missionId: "mission-1" });

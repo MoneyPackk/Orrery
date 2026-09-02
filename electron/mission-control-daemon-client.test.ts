@@ -6,6 +6,25 @@ const review = { changes: [{ path: "src/a.ts", additions: 1, deletions: 0, binar
 const inspection = { mission: { id: "mission-1", plan: { id: "plan-1" } }, planRevisionId: "plan-1", changeRevision: "change-1", contentDigest: "a".repeat(64), review };
 
 describe("MissionControlDaemonClient", () => {
+  it("approves only the exact native-confirmed repository proposal", async () => {
+    const client = sharedClient();
+    const proposal = { proposalId: "proposal-1", canonicalRoot: "C:/repo", fingerprint: "a".repeat(64), approvalNonce: "b".repeat(64), expiresAt: "2026-09-01T01:00:00.000Z" };
+    client.proposeRepository.mockResolvedValue(proposal);
+    client.approveRepository.mockResolvedValue({ repositoryId: "repository-1", fingerprint: proposal.fingerprint });
+    const confirmRepository = vi.fn(async () => true);
+    const adapter = adapterFor(client, async () => true, true, { confirmRepository });
+    await expect(adapter.intakeRepository({ intentId: "intent-1", localPath: "C:/repo" }, {} as never)).resolves.toEqual({ repositoryId: "repository-1", canonicalRoot: "C:/repo", fingerprint: proposal.fingerprint });
+    expect(confirmRepository).toHaveBeenCalledWith(proposal, expect.anything());
+    expect(client.approveRepository).toHaveBeenCalledWith({ intentId: "intent-1", proposalId: "proposal-1", fingerprint: proposal.fingerprint, approvalNonce: proposal.approvalNonce });
+  });
+
+  it("does not expose the approval nonce when repository confirmation is cancelled", async () => {
+    const client = sharedClient();
+    client.proposeRepository.mockResolvedValue({ proposalId: "proposal-1", canonicalRoot: "C:/repo", fingerprint: "a".repeat(64), approvalNonce: "b".repeat(64), expiresAt: "2026-09-01T01:00:00.000Z" });
+    const adapter = adapterFor(client, async () => true, true, { confirmRepository: async () => false });
+    await expect(adapter.intakeRepository({ intentId: "intent-1", localPath: "C:/repo" }, {} as never)).rejects.toThrow(/cancelled/i);
+    expect(client.approveRepository).not.toHaveBeenCalled();
+  });
   it("displays exact daemon inspection content and signs its digest only after confirmation", async () => {
     const client = sharedClient();
     client.inspectMission.mockResolvedValue(inspection);

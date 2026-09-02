@@ -1,7 +1,7 @@
 import * as React from "@theia/core/shared/react";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 import { ReactWidget } from "@theia/core/lib/browser/widgets/react-widget";
-import type { ReviewDecision } from "../common/mission-control-contracts";
+import type { ReviewDecision, MissionCreateInput } from "../common/mission-control-contracts";
 import { MissionControlService, type MissionControlState } from "../common/mission-control-types";
 import { MissionControlView } from "./mission-control-view";
 
@@ -12,6 +12,7 @@ export class MissionControlWidget extends ReactWidget {
   protected state: MissionControlState = { missions: [], loading: true };
   private requestGeneration = 0;
   private reviewPending = false;
+  private actionPending = false;
 
   @inject(MissionControlService)
   protected readonly service!: MissionControlService;
@@ -82,7 +83,18 @@ export class MissionControlWidget extends ReactWidget {
     this.update();
   }
 
+  async intakeRepository(localPath: string): Promise<void> { await this.action(() => this.service.intakeRepository({ intentId: crypto.randomUUID(), localPath })); }
+  async createMission(input: Omit<MissionCreateInput, "intentId">): Promise<void> { await this.action(() => this.service.create({ ...input, intentId: crypto.randomUUID() })); }
+  async runMission(): Promise<void> { const mission = this.state.selected; if (mission) await this.action(() => this.service.run({ intentId: crypto.randomUUID(), missionId: mission.id, planRevisionId: mission.plan.id })); }
+  async cancelMission(): Promise<void> { const mission = this.state.selected; if (mission?.activeRunId) await this.action(() => this.service.cancel({ intentId: crypto.randomUUID(), missionId: mission.id, runId: mission.activeRunId! })); }
+  private async action(operation: () => Promise<MissionControlState>): Promise<void> {
+    if (this.actionPending) return;
+    this.actionPending = true; this.state = { ...this.state, loading: true, pendingAction: "Working...", error: undefined }; this.update();
+    try { this.state = await operation(); } catch (error) { this.state = { ...this.state, error: error instanceof Error ? error.message : "Mission action failed." }; }
+    finally { this.actionPending = false; this.state = { ...this.state, loading: false, pendingAction: undefined }; this.update(); }
+  }
+
   protected render(): React.ReactNode {
-    return <MissionControlView state={this.state} onSelect={(id) => void this.selectMission(id)} onRefresh={() => void this.refresh()} onReview={(decision) => void this.review(decision)} />;
+    return <MissionControlView state={this.state} onSelect={(id) => void this.selectMission(id)} onRefresh={() => void this.refresh()} onReview={(decision) => void this.review(decision)} onIntake={(path) => void this.intakeRepository(path)} onCreate={(input) => void this.createMission(input)} onRun={() => void this.runMission()} onCancel={() => void this.cancelMission()} />;
   }
 }

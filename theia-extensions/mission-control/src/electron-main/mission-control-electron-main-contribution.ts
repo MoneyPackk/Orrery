@@ -3,15 +3,18 @@ import type { ElectronMainApplication, ElectronMainApplicationContribution } fro
 import { app, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
 import {
   MissionControlHostService,
+  MISSION_INTAKE_REPOSITORY_CHANNEL, MISSION_CREATE_CHANNEL, MISSION_RUN_CHANNEL, MISSION_CANCEL_CHANNEL, MISSION_INSPECT_CHANNEL,
   MISSION_GET_SNAPSHOT_CHANNEL,
   MISSION_LIST_CHANNEL,
   MISSION_REVIEW_CHANNEL,
   type MissionReviewInput,
   type MissionPromotionResult,
   type MissionSnapshotInput,
+  type RepositoryIntakeInput, type MissionCreateInput, type MissionRunInput, type MissionCancelInput, type MissionInspectInput,
 } from "../common/mission-control-contracts";
 
 export interface MissionControlHostRequestContext {
+  intakeRepository(input: RepositoryIntakeInput): Promise<import("../common/mission-control-contracts").RepositoryIntakeResult>;
   reviewAndPromote(input: MissionReviewInput): Promise<MissionPromotionResult>;
 }
 
@@ -22,6 +25,7 @@ const HOST_READY_CHANNEL = "mission:v1:host-ready";
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const isId = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 200;
+const isText = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 8192;
 
 function exactRecord(value: unknown, keys: ReadonlyArray<string>): Record<string, unknown> {
   if (!isRecord(value) || Object.keys(value).length !== keys.length || !keys.every((key) => key in value)) {
@@ -34,6 +38,36 @@ function parseSnapshot(value: unknown): MissionSnapshotInput {
   const input = exactRecord(value, ["missionId"]);
   if (!isId(input.missionId)) throw new Error("Invalid mission IPC payload");
   return { missionId: input.missionId };
+}
+function parseIntake(value: unknown): RepositoryIntakeInput {
+  const input = exactRecord(value, ["intentId", "localPath"]);
+  if (!isId(input.intentId) || !isText(input.localPath)) throw new Error("Invalid mission IPC payload");
+  return { intentId: input.intentId, localPath: input.localPath };
+}
+function parseCreate(value: unknown): MissionCreateInput {
+  const input = exactRecord(value, ["intentId", "repositoryId", "title", "goal", "mode", "plan"]);
+  if (!isId(input.intentId) || !isId(input.repositoryId) || !isText(input.title) || !isText(input.goal) || !["explore", "plan", "build", "delegate"].includes(input.mode as string)) throw new Error("Invalid mission IPC payload");
+  const plan = exactRecord(input.plan, ["scope", "actions", "acceptanceCriteria"]);
+  if (!isText(plan.scope) || !isStringArray(plan.actions) || !isStringArray(plan.acceptanceCriteria)) throw new Error("Invalid mission IPC payload");
+  return input as unknown as MissionCreateInput;
+}
+function parseRun(value: unknown): MissionRunInput {
+  const input = exactRecord(value, ["intentId", "missionId", "planRevisionId"]);
+  if (!isId(input.intentId) || !isId(input.missionId) || !isId(input.planRevisionId)) throw new Error("Invalid mission IPC payload");
+  return input as unknown as MissionRunInput;
+}
+function parseCancel(value: unknown): MissionCancelInput {
+  const input = exactRecord(value, ["intentId", "missionId", "runId"]);
+  if (!isId(input.intentId) || !isId(input.missionId) || !isId(input.runId)) throw new Error("Invalid mission IPC payload");
+  return input as unknown as MissionCancelInput;
+}
+function parseInspect(value: unknown): MissionInspectInput {
+  const input = exactRecord(value, ["missionId", "planRevisionId"]);
+  if (!isId(input.missionId) || !isId(input.planRevisionId)) throw new Error("Invalid mission IPC payload");
+  return input as unknown as MissionInspectInput;
+}
+function isStringArray(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.length > 0 && value.length <= 100 && value.every(item => typeof item === "string" && item.trim().length > 0 && item.length <= 8192);
 }
 
 function parseReview(value: unknown): MissionReviewInput {
@@ -65,8 +99,13 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
     return invoke(parse(values[0]));
   };
   const handlers = [
+    [MISSION_INTAKE_REPOSITORY_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => { const context = trustedContext(event, host); if (values.length !== 1) throw new Error("Invalid mission IPC payload"); return context.intakeRepository(parseIntake(values[0])); }],
+    [MISSION_CREATE_CHANNEL, guarded(parseCreate, input => host.create(input))],
+    [MISSION_RUN_CHANNEL, guarded(parseRun, input => host.run(input))],
+    [MISSION_CANCEL_CHANNEL, guarded(parseCancel, input => host.cancel(input))],
     [MISSION_LIST_CHANNEL, trusted(() => host.list())],
     [MISSION_GET_SNAPSHOT_CHANNEL, guarded(parseSnapshot, (input) => host.getSnapshot(input))],
+    [MISSION_INSPECT_CHANNEL, guarded(parseInspect, input => host.inspect(input))],
     [MISSION_REVIEW_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
       const context = trustedContext(event, host);
       if (values.length !== 1) throw new Error("Invalid mission IPC payload");

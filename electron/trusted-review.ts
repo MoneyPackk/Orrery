@@ -38,14 +38,14 @@ export async function confirmTrustedReview(target: TrustedReviewTarget, parent: 
       else if (destination === "orrery-review://cancel") finish(false);
     });
     window.once("closed", () => { if (!settled) { settled = true; resolve(false); } });
-    window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(reviewHtml(target))}`).then(() => window.show()).catch(reject);
+    window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(reviewHtml(target))}`).then(() => window.show()).catch(error => { if (!settled) { settled = true; reject(error); } window.destroy(); });
   });
 }
 
 function reviewHtml(target: TrustedReviewTarget): string {
   const title = target.decision === "accepted" ? "Promote reviewed change" : "Reject reviewed change";
   const detail = escapeHtml(trustedReviewDetail(target));
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; navigate-to 'none'"><title>${title}</title><style>body{font:14px system-ui;margin:0;padding:28px;background:#111;color:#eee}h1{font-size:22px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#191919;border:1px solid #444;padding:18px;max-height:560px;overflow:auto}footer{display:flex;justify-content:flex-end;gap:12px}a{color:inherit;border:1px solid #777;padding:10px 16px;text-decoration:none}a.primary{background:#eee;color:#111}</style></head><body><h1>${title}</h1><p>This exact daemon inspection will be bound to the signed decision.</p><pre>${detail}</pre><footer><a href="orrery-review://cancel">Cancel</a><a class="primary" href="orrery-review://confirm">${target.decision === "accepted" ? "Promote" : "Reject"}</a></footer></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${title}</title><style>body{font:14px system-ui;margin:0;padding:28px;background:#111;color:#eee}h1{font-size:22px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#191919;border:1px solid #444;padding:18px;max-height:560px;overflow:auto}footer{display:flex;justify-content:flex-end;gap:12px}a{color:inherit;border:1px solid #777;padding:10px 16px;text-decoration:none}a.primary{background:#eee;color:#111}</style></head><body><h1>${title}</h1><p>This exact daemon inspection will be bound to the signed decision.</p><pre>${detail}</pre><footer><a href="orrery-review://cancel">Cancel</a><a class="primary" href="orrery-review://confirm">${target.decision === "accepted" ? "Promote" : "Reject"}</a></footer></body></html>`;
 }
 
 function escapeHtml(value: string): string { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"); }

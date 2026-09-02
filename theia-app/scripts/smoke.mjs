@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { classifyNativePreparationFailure } from "./smoke-policy.mjs";
 import { waitForTheiaExit, waitForTheiaReadiness } from "./smoke-runtime.mjs";
 
@@ -17,21 +18,27 @@ if (full.status === 0) {
   const smokeRoot = resolve(tmpdir(), "orrery-theia-smoke-");
   mkdirSync(smokeRoot, { recursive: true });
   const userData = mkdtempSync(smokeRoot);
-  const launch = spawn(process.execPath, npmArgs(["start", "--", `--electronUserData=${userData}`]), {
+  const localAppData = resolve(process.env.LOCALAPPDATA ?? tmpdir(), `OrrerySmoke-${randomUUID()}`);
+  mkdirSync(localAppData, { recursive: true });
+  const electronExecutable = resolve(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "Electron");
+  const launch = spawn(electronExecutable, [root, `--electronUserData=${userData}`], {
     cwd: root,
     detached: process.platform !== "win32",
-    env: { ...process.env, ORRERY_THEIA_SMOKE: "1" },
+    env: { ...process.env, LOCALAPPDATA: localAppData, ORRERY_THEIA_SMOKE: "1", ORRERY_THEIA_SMOKE_USER_DATA: userData },
     stdio: ["ignore", "pipe", "pipe"]
   });
   try {
     await waitForTheiaReadiness(launch, 15_000);
     await waitForTheiaExit(launch, 15_000);
-    rmSync(userData, { recursive: true, force: true });
+    terminateProcessTree(launch.pid);
+    removeSmokeUserData(userData);
+    removeSmokeUserData(localAppData);
     console.log("Theia smoke passed: full build completed and the trusted renderer confirmed host readiness.");
     process.exit(0);
   } catch (error) {
     terminateProcessTree(launch.pid);
-    rmSync(userData, { recursive: true, force: true });
+    removeSmokeUserData(userData);
+    removeSmokeUserData(localAppData);
     throw error;
   }
 } else {
@@ -43,6 +50,17 @@ if (full.status === 0) {
   }
   console.warn(`Theia smoke fallback: real build/launch is unavailable under Node ${process.versions.node} on ${process.platform} (${nativeReason}).`);
   console.warn("Falling back to generated application metadata and DI validation.");
+}
+
+function removeSmokeUserData(path) {
+  // Chromium can release profile WAL handles just after Electron emits exit.
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch (error) {
+    if (process.platform !== "win32" || error?.code !== "EPERM") throw error;
+    // Windows may release Chromium profile handles asynchronously after taskkill.
+    spawnSync("cmd.exe", ["/c", "rmdir", "/s", "/q", path], { stdio: "ignore" });
+  }
 }
 
 function terminateProcessTree(pid) {

@@ -13,6 +13,7 @@ import { MissionControlDaemonClient as OwnedDaemonClient } from "@orrery/root-mi
 
 interface HostService extends PublicHostService {
   requestContext(sender: object, senderFrame: object | null): {
+    intakeRepository(input: Parameters<PublicHostService["intakeRepository"]>[0]): ReturnType<PublicHostService["intakeRepository"]>;
     reviewAndPromote(input: Parameters<PublicHostService["reviewAndPromote"]>[0]): ReturnType<PublicHostService["reviewAndPromote"]>;
   } | null;
 }
@@ -31,6 +32,15 @@ export class MissionControlDaemonClient {
   list(): ReturnType<HostService["list"]> {
     return this.daemon.list();
   }
+
+  intakeRepository(input: Parameters<HostService["intakeRepository"]>[0], parent: BrowserWindow): ReturnType<HostService["intakeRepository"]> {
+    return this.daemon.intakeRepository(input, parent);
+  }
+
+  create(input: Parameters<HostService["create"]>[0]): ReturnType<HostService["create"]> { return this.daemon.create(input); }
+  run(input: Parameters<HostService["run"]>[0]): ReturnType<HostService["run"]> { return this.daemon.run(input); }
+  cancel(input: Parameters<HostService["cancel"]>[0]): ReturnType<HostService["cancel"]> { return this.daemon.cancel(input); }
+  inspect(input: Parameters<HostService["inspect"]>[0]): ReturnType<HostService["inspect"]> { return this.daemon.inspect(input); }
 
   getSnapshot(input: Parameters<HostService["getSnapshot"]>[0]): ReturnType<HostService["getSnapshot"]> {
     return this.daemon.getSnapshot(input);
@@ -135,15 +145,20 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
         const parent = this.requireWindows().isTrustedRenderer(contents, frame as WebContents["mainFrame"] | null)
           ? this.requireWindows().parentWindowFor(contents)
           : null;
-        return parent ? { reviewAndPromote: input => this.daemon.reviewAndPromoteInWindow(input, parent) } : null;
+        return parent ? { intakeRepository: input => this.daemon.intakeRepository(input, parent), reviewAndPromote: input => this.daemon.reviewAndPromoteInWindow(input, parent) } : null;
       },
+      intakeRepository: input => this.daemon.intakeRepository(input, this.requireWindows().parentWindow() ?? (() => { throw new Error("Trusted Theia window unavailable."); })()),
+      create: input => this.daemon.create(input),
+      run: input => this.daemon.run(input),
+      cancel: input => this.daemon.cancel(input),
       list: () => this.daemon.list(),
       getSnapshot: input => this.daemon.getSnapshot(input),
+      inspect: input => this.daemon.inspect(input),
       reviewAndPromote: input => this.daemon.reviewAndPromote(input),
     };
   }
 
-  onStart(_application: ElectronMainApplication, electronApp: Pick<typeof app, "on" | "quit"> = app): void {
+  onStart(_application: ElectronMainApplication, electronApp: Pick<typeof app, "on" | "quit" | "exit"> = app): void {
     let quitAfterCleanup = false;
     electronApp.on("before-quit", event => {
       if (quitAfterCleanup) return;
@@ -151,6 +166,7 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
       void this.disconnect().then(() => {
         quitAfterCleanup = true;
         electronApp.quit();
+        setTimeout(() => electronApp.exit(0), 5_000).unref();
       }, error => console.error(error));
     });
   }

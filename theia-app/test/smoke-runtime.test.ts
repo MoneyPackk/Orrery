@@ -43,6 +43,12 @@ describe("Theia smoke runtime readiness", () => {
     child.signalCode = null;
     await expect(waitForTheiaExit(child as never, 100)).resolves.toBeUndefined();
   });
+
+  it("fails closed when process death occurs before an exit code is observed", async () => {
+    const child = fakeChild() as ReturnType<typeof fakeChild> & { pid: number };
+    child.pid = 2_147_483_647;
+    await expect(waitForTheiaExit(child as never, 100, { isProcessAlive: () => false })).rejects.toThrow(/unobserved_process_death/);
+  });
 });
 
 function fakeChild() {

@@ -29,8 +29,8 @@ export async function runDaemon(): Promise<void> {
     if (!handoffNonce) throw new Error("Managed daemon startup requires an ownership handoff nonce.");
     if (!(await verifyDaemonLock(paths.lockPath, handoffNonce))) throw new Error("Managed daemon ownership handoff is invalid.");
   } else if (!lock) throw new Error("An Orrery daemon is already running or starting.");
-  await rm(paths.endpointPath, { force: true });
-  await rm(paths.tokenPath, { force: true });
+  await removeTransientStateFile(paths.endpointPath);
+  await removeTransientStateFile(paths.tokenPath);
 
   const instanceId = randomUUID();
   let trustedApprovalPublicKey: string | undefined;
@@ -88,6 +88,18 @@ export async function runDaemon(): Promise<void> {
     unregister();
     await stop();
     if (!isProcessAlive(process.pid)) await rm(paths.endpointPath, { force: true });
+  }
+}
+
+async function removeTransientStateFile(path: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rm(path, { force: true });
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" || attempt >= 20) throw error;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
   }
 }
 

@@ -4,6 +4,8 @@ import type { BrowserWindow } from "electron";
 import { TrustedApprovalService } from "../packages/mission-control-daemon/src/promotion-approval";
 import { acquireDaemonLock, createRuntimeDirectory, endpointPaths, ensureDaemon, readPrivateStateFile, stopOwnedDaemon, type EnsuredDaemon } from "../scripts/daemon-lifecycle";
 import type { MissionIpcService, MissionSnapshotIntent } from "./mission-ipc";
+import type { ProposeRepositoryInput } from "./contract";
+import { confirmTrustedRepository } from "./trusted-repository";
 import { confirmTrustedReview } from "./trusted-review";
 import { completeParentBootstrap } from "../scripts/daemon-bootstrap";
 
@@ -27,6 +29,7 @@ export interface MissionControlDaemonClientDependencies {
   readToken?: (path: string) => Promise<string>;
   createClient?: () => SharedClient;
   confirmReview?: (input: { decision: "accepted" | "rejected"; missionId: string; planRevisionId: string; changeRevision: string; contentDigest: string; review: import("@orrery/mission-control-protocol").MissionReviewContent }, parent: BrowserWindow) => Promise<boolean>;
+  confirmRepository?: (input: { canonicalRoot: string; fingerprint: string; expiresAt: string }, parent: BrowserWindow) => Promise<boolean>;
   acquireLock?: () => ReturnType<typeof acquireDaemonLock>;
   parentWindow?: () => BrowserWindow | null;
   daemonEntryPath?: string;
@@ -44,6 +47,13 @@ export class MissionControlDaemonClient implements MissionIpcService {
   private shuttingDown = false;
   constructor(private readonly dependencies: MissionControlDaemonClientDependencies = {}) {}
   proposeRepository: MissionIpcService["proposeRepository"] = async (input) => this.mutate((client) => client.proposeRepository(input));
+  async intakeRepository(input: ProposeRepositoryInput, parent: BrowserWindow): Promise<{ repositoryId: string; canonicalRoot: string; fingerprint: string }> {
+    const proposal = await this.mutate((client) => client.proposeRepository(input));
+    const confirm = this.dependencies.confirmRepository ?? confirmTrustedRepository;
+    if (!await confirm(proposal, parent)) throw new Error("Repository approval cancelled.");
+    const approved = await this.mutate((client) => client.approveRepository({ intentId: input.intentId, proposalId: proposal.proposalId, fingerprint: proposal.fingerprint, approvalNonce: proposal.approvalNonce })) as { repositoryId: string; fingerprint: string };
+    return { repositoryId: approved.repositoryId, canonicalRoot: proposal.canonicalRoot, fingerprint: approved.fingerprint };
+  }
   create: MissionIpcService["create"] = async (input) => this.mutate((client) => client.createMission(input));
   run: MissionIpcService["run"] = async (input) => this.mutate((client) => client.runMission(input));
   cancel: MissionIpcService["cancel"] = async (input) => this.mutate((client) => client.cancelMission(input));
@@ -75,8 +85,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
       const connecting = this.connectingClient;
       this.client = undefined;
       const daemon = this.daemon;
-      const disconnectClients = Promise.all([...new Set([active, connecting].filter((client): client is SharedClient => client !== undefined))]
-        .map(client => client.disconnect()));
+      const clients = [...new Set([active, connecting].filter((client): client is SharedClient => client !== undefined))];
       const stop = daemon
         ? (this.dependencies.stopDaemon ?? stopOwnedDaemon)(daemon).then(() => {
           if (this.daemon === daemon) this.daemon = undefined;
@@ -84,9 +93,13 @@ export class MissionControlDaemonClient implements MissionIpcService {
         : Promise.resolve();
       const stopFailure = await stop.then(() => undefined, error => error);
       if (stopFailure) {
-        void disconnectClients.catch(() => undefined);
+        void Promise.all(clients.map(client => client.disconnect())).catch(() => undefined);
         throw stopFailure;
       }
+      const disconnectClients = Promise.race([
+        Promise.all(clients.map(client => client.disconnect())),
+        new Promise<void>(resolve => setTimeout(resolve, 2_000)),
+      ]);
       const [disconnectResult, stopResult] = await Promise.allSettled([disconnectClients, stop]);
       const disconnectError = disconnectResult.status === "rejected" ? disconnectResult.reason : undefined;
       const stopError = stopResult.status === "rejected" ? stopResult.reason : undefined;
@@ -126,8 +139,15 @@ export class MissionControlDaemonClient implements MissionIpcService {
       signal: abort.signal,
       spawn: (handoff) => {
         if (!this.dependencies.daemonEntryPath) throw new Error("Managed daemon resource path is unavailable.");
-        const child = spawn(process.execPath, [this.dependencies.daemonEntryPath, "--electron-promotion-bootstrap"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ORRERY_DAEMON_MANAGED: "1", ORRERY_DAEMON_HANDOFF_NONCE: handoff?.nonce }, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], windowsHide: true });
-        if (process.env.ORRERY_THEIA_SMOKE === "1") child.stderr?.on("data", chunk => console.error(`Managed daemon: ${chunk.toString().trim()}`));
+         const child = spawn(process.execPath, [this.dependencies.daemonEntryPath, "--electron-promotion-bootstrap"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ORRERY_DAEMON_MANAGED: "1", ORRERY_DAEMON_HANDOFF_NONCE: handoff?.nonce }, stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"], windowsHide: true });
+         child.stdout?.on("data", chunk => { if (process.env.ORRERY_THEIA_SMOKE === "1") console.log(`Managed daemon: ${chunk.toString().trim()}`); });
+         child.stderr?.on("data", chunk => {
+           if (process.env.ORRERY_THEIA_SMOKE === "1") console.error(`Managed daemon: ${chunk.toString().trim()}`);
+         });
+         child.once("error", error => console.error(`Managed daemon process error: ${error instanceof Error ? error.message : String(error)}`));
+         child.once("exit", (code, signal) => {
+           if (code !== 0 && code !== null && process.env.ORRERY_THEIA_SMOKE === "1") console.error(`Managed daemon exited during startup (code ${code}, signal ${signal ?? "none"}).`);
+         });
         if (!handoff?.nonce || !child.pid) { child.kill("SIGTERM"); throw new Error("Managed daemon bootstrap pipe is unavailable."); }
         const bootstrapBinding = completeParentBootstrap(child, handoff.nonce, this.approvals.publicKey);
         void bootstrapBinding.catch(() => child.kill("SIGTERM"));

@@ -144,7 +144,7 @@ describe("isolated Theia Electron host", () => {
     await contribution.hostService.getSnapshot({ missionId: "mission-1" });
     const quit = vi.fn();
     let beforeQuit: ((event: { preventDefault(): void }) => void) | undefined;
-    const app = { on: vi.fn((_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }), quit };
+    const app = { on: vi.fn((_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }), quit, exit: vi.fn() };
     contribution.onStart({} as never, app as never);
     const preventDefault = vi.fn();
     beforeQuit!({ preventDefault });
@@ -163,7 +163,7 @@ describe("isolated Theia Electron host", () => {
     const contribution = new MissionControlHostContribution(daemon as never, {} as never);
     const quit = vi.fn();
     let beforeQuit: ((event: { preventDefault(): void }) => void) | undefined;
-    const app = { on: vi.fn((_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }), quit };
+    const app = { on: vi.fn((_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }), quit, exit: vi.fn() };
     contribution.onStart({} as never, app as never);
 
     contribution.onStop();
@@ -185,7 +185,7 @@ describe("isolated Theia Electron host", () => {
     const contribution = new MissionControlHostContribution(daemon as never, {} as never);
     const quit = vi.fn();
     let beforeQuit: ((event: { preventDefault(): void }) => void) | undefined;
-    contribution.onStart({} as never, { on: (_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }, quit } as never);
+    contribution.onStart({} as never, { on: (_name: string, listener: typeof beforeQuit) => { beforeQuit = listener; }, quit, exit: vi.fn() } as never);
 
     beforeQuit!({ preventDefault: vi.fn() });
     await new Promise(resolve => setTimeout(resolve, 25));

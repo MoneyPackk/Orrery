@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 export const THEIA_READY_MARKER = "ORRERY_THEIA_READY";
 
 export function waitForTheiaReadiness(child, timeoutMs) {
@@ -25,7 +27,7 @@ export function waitForTheiaReadiness(child, timeoutMs) {
   });
 }
 
-export function waitForTheiaExit(child, timeoutMs) {
+export function waitForTheiaExit(child, timeoutMs, dependencies = {}) {
   if (child.exitCode !== null) {
     return child.exitCode === 0
       ? Promise.resolve()
@@ -33,10 +35,31 @@ export function waitForTheiaExit(child, timeoutMs) {
   }
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Theia Electron did not exit after readiness within ${timeoutMs}ms.`)), timeoutMs);
-    child.once("exit", (code, signal) => {
+    const finish = (code, signal) => {
       clearTimeout(timeout);
+      clearInterval(poll);
       if (code === 0) resolve();
       else reject(new Error(`Theia Electron exited after readiness with code ${code}, signal ${signal ?? "none"}.`));
-    });
+    };
+    const poll = setInterval(() => {
+      if (child.exitCode !== null) finish(child.exitCode, child.signalCode);
+      else if (child.pid && !(dependencies.isProcessAlive ?? isProcessAlive)(child.pid)) finish(1, "unobserved_process_death");
+    }, 25);
+    child.once("exit", finish);
+    child.once("close", finish);
+    if (child.exitCode !== null) finish(child.exitCode, child.signalCode);
   });
+}
+
+function isProcessAlive(pid) {
+  if (process.platform === "win32") {
+    const result = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return result.status === 0 && result.stdout.includes(`"${pid}"`);
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

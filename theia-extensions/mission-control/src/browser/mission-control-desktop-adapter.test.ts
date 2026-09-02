@@ -34,4 +34,14 @@ describe("MissionControlDesktopAdapter", () => {
     await expect(adapter.review(snapshot, "accepted")).resolves.toMatchObject({ status: "accepted" });
     expect(api.reviewAndPromote).toHaveBeenCalledWith(expect.objectContaining({ missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" }));
   });
+
+  it("preserves an approved repository while creating a mission", async () => {
+    const snapshot = mission();
+    const repository = { repositoryId: "repository-1", canonicalRoot: "C:/repo", fingerprint: "a".repeat(64) };
+    const api = { list: vi.fn(async () => []), getSnapshot: vi.fn(async () => snapshot), intakeRepository: vi.fn(async () => repository), create: vi.fn(async () => snapshot) };
+    window.orreryMissionControl = api as never;
+    const adapter = new MissionControlDesktopAdapter();
+    await expect(adapter.intakeRepository({ intentId: "intent-1", localPath: "C:/repo" })).resolves.toMatchObject({ repository });
+    await expect(adapter.create({ intentId: "intent-2", repositoryId: repository.repositoryId, title: "Title", goal: "Goal", mode: "build", plan: { scope: "Scope", actions: ["Act"], acceptanceCriteria: ["Pass"] } })).resolves.toMatchObject({ repository });
+  });
 });

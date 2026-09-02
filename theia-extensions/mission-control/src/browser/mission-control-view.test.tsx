@@ -11,10 +11,11 @@ const selected: Mission = {
   changes: [{ path: "src/widget.tsx", additions: 12, deletions: 2, diff: "+widget" }],
   evidence: [{ id: "e-1", kind: "test", status: "passed", summary: "Widget tests passed", planRevisionId: "p-1", timestamp: "2026-08-29T11:00:00.000Z" }], completionSummary: "Compiled tracer",
 };
+const actions = { onSelect: vi.fn(), onRefresh: vi.fn(), onReview: vi.fn(), onIntake: vi.fn(), onCreate: vi.fn(), onRun: vi.fn(), onCancel: vi.fn() };
 
 describe("MissionControlView", () => {
   it("renders accessible mission list, status, detail, evidence, and review controls", () => {
-    render(<MissionControlView state={{ missions: [{ id: "m-1", title: "Theia tracer", status: "ready_for_review", updatedAt: selected.updatedAt }], selectedId: "m-1", selected }} onSelect={vi.fn()} onRefresh={vi.fn()} onReview={vi.fn()} />);
+    render(<MissionControlView state={{ missions: [{ id: "m-1", title: "Theia tracer", status: "ready_for_review", updatedAt: selected.updatedAt }], selectedId: "m-1", selected }} {...actions} />);
     expect(screen.getByRole("region", { name: "Mission Control" })).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Missions" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Theia tracer" })).toBeInTheDocument();
@@ -26,7 +27,7 @@ describe("MissionControlView", () => {
 
   it("dispatches selection, refresh, and review actions", async () => {
     const user = userEvent.setup(); const onSelect = vi.fn(); const onRefresh = vi.fn(); const onReview = vi.fn();
-    render(<MissionControlView state={{ missions: [{ id: "m-1", title: "Theia tracer", status: "ready_for_review", updatedAt: selected.updatedAt }], selectedId: "m-1", selected }} onSelect={onSelect} onRefresh={onRefresh} onReview={onReview} />);
+    render(<MissionControlView state={{ missions: [{ id: "m-1", title: "Theia tracer", status: "ready_for_review", updatedAt: selected.updatedAt }], selectedId: "m-1", selected }} {...actions} onSelect={onSelect} onRefresh={onRefresh} onReview={onReview} />);
     await user.click(screen.getByRole("button", { name: "Theia tracer ready for review" }));
     await user.click(screen.getByRole("button", { name: "Refresh missions" }));
     await user.click(screen.getByRole("button", { name: "Request revision" }));
@@ -34,7 +35,7 @@ describe("MissionControlView", () => {
   });
 
   it("disables review controls while a review is pending", () => {
-    render(<MissionControlView state={{ missions: [], selectedId: "m-1", selected, pendingReview: true }} onSelect={vi.fn()} onRefresh={vi.fn()} onReview={vi.fn()} />);
+    render(<MissionControlView state={{ missions: [], selectedId: "m-1", selected, pendingReview: true }} {...actions} />);
     expect(screen.getByRole("button", { name: "Accept mission" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
   });
