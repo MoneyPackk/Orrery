@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:web": "vite build",
     "desktop:build": "npm run desktop:build:main && npm run desktop:build:preload && npm run desktop:build:daemon",
     "desktop:build:main": "vite build --config vite.main.config.ts",
     "desktop:build:preload": "vite build --config vite.preload.config.ts",
