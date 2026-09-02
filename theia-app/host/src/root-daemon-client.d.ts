@@ -11,6 +11,11 @@ declare module "@orrery/root-mission-control-daemon-client" {
     run(input: Parameters<MissionControlHostService["run"]>[0]): ReturnType<MissionControlHostService["run"]>;
     cancel(input: Parameters<MissionControlHostService["cancel"]>[0]): ReturnType<MissionControlHostService["cancel"]>;
     inspect(input: Parameters<MissionControlHostService["inspect"]>[0]): ReturnType<MissionControlHostService["inspect"]>;
+    getIntelligenceSettings(): ReturnType<MissionControlHostService["getIntelligenceSettings"]>;
+    setIntelligenceSettings(input: Parameters<MissionControlHostService["setIntelligenceSettings"]>[0]): ReturnType<MissionControlHostService["setIntelligenceSettings"]>;
+    listIntelligenceMessages(input: Parameters<MissionControlHostService["listIntelligenceMessages"]>[0]): ReturnType<MissionControlHostService["listIntelligenceMessages"]>;
+    sendIntelligenceMessage(input: Parameters<MissionControlHostService["sendIntelligenceMessage"]>[0]): ReturnType<MissionControlHostService["sendIntelligenceMessage"]>;
+    clearIntelligenceThread(input: Parameters<MissionControlHostService["clearIntelligenceThread"]>[0]): ReturnType<MissionControlHostService["clearIntelligenceThread"]>;
     reviewAndPromote(input: MissionReviewInput): ReturnType<MissionControlHostService["reviewAndPromote"]>;
     reviewAndPromoteInWindow(input: MissionReviewInput, parent: BrowserWindow): ReturnType<MissionControlHostService["reviewAndPromote"]>;
     disconnect(): Promise<void>;

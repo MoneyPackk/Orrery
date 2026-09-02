@@ -1,6 +1,23 @@
-import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput } from "./mission-control-contracts";
+import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput, IntelligenceMessage, IntelligenceSettingsInput, IntelligenceSettingsStatus } from "./mission-control-contracts";
 
 export const MissionControlService = Symbol("MissionControlService");
+export const OrreryIntelligenceService = Symbol("OrreryIntelligenceService");
+
+export interface OrreryIntelligenceState {
+  readonly threadId: string;
+  readonly messages: ReadonlyArray<IntelligenceMessage>;
+  readonly settings: IntelligenceSettingsStatus;
+  readonly loading?: boolean;
+  readonly sending?: boolean;
+  readonly error?: string;
+}
+
+export interface OrreryIntelligenceService {
+  load(threadId: string): Promise<OrreryIntelligenceState>;
+  send(threadId: string, text: string, missionId?: string): Promise<OrreryIntelligenceState>;
+  clear(threadId: string): Promise<OrreryIntelligenceState>;
+  configure(input: Omit<IntelligenceSettingsInput, "intentId">): Promise<OrreryIntelligenceState>;
+}
 
 export interface MissionControlState {
   readonly missions: ReadonlyArray<MissionListItem>;

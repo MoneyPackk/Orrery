@@ -34,16 +34,24 @@ export function waitForTheiaExit(child, timeoutMs, dependencies = {}) {
       : Promise.reject(new Error(`Theia Electron exited after readiness with code ${child.exitCode}, signal ${child.signalCode ?? "none"}.`));
   }
   return new Promise((resolve, reject) => {
+    // The OS drops the PID before Node delivers "exit", so a disappeared PID alone is not a failure:
+    // allow a grace window for the real exit code, and only report an unobserved death if none arrives.
+    const graceMs = Math.min(Math.max(Math.floor(timeoutMs / 2), 1), 500);
+    let grace;
     const timeout = setTimeout(() => reject(new Error(`Theia Electron did not exit after readiness within ${timeoutMs}ms.`)), timeoutMs);
     const finish = (code, signal) => {
       clearTimeout(timeout);
+      clearTimeout(grace);
       clearInterval(poll);
       if (code === 0) resolve();
       else reject(new Error(`Theia Electron exited after readiness with code ${code}, signal ${signal ?? "none"}.`));
     };
     const poll = setInterval(() => {
       if (child.exitCode !== null) finish(child.exitCode, child.signalCode);
-      else if (child.pid && !(dependencies.isProcessAlive ?? isProcessAlive)(child.pid)) finish(1, "unobserved_process_death");
+      else if (child.pid && !(dependencies.isProcessAlive ?? isProcessAlive)(child.pid) && grace === undefined) {
+        clearInterval(poll);
+        grace = setTimeout(() => finish(child.exitCode ?? 1, child.exitCode === null ? "unobserved_process_death" : child.signalCode), graceMs);
+      }
     }, 25);
     child.once("exit", finish);
     child.once("close", finish);

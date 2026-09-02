@@ -23,10 +23,27 @@ describe("mission control Theia extension structure", () => {
   });
 
   it("keeps browser code outside privileged daemon, kernel, filesystem, process, and Git packages", () => {
-    const sources = ["mission-control-desktop-adapter.ts", "mission-control-view.tsx", "mission-control-widget.tsx", "mission-control-widget-factory.ts", "mission-control-contribution.ts", "mission-control-frontend-module.ts"]
+    const sources = ["mission-control-desktop-adapter.ts", "mission-control-view.tsx", "mission-control-widget.tsx", "mission-control-widget-factory.ts", "mission-control-contribution.ts", "mission-control-frontend-module.ts",
+      "orrery-intelligence-adapter.ts", "orrery-intelligence-view.tsx", "orrery-intelligence-widget.tsx", "orrery-intelligence-contribution.ts", "orrery-intelligence-style.ts"]
       .map((file) => read(`src/browser/${file}`)).join("\n");
     expect(sources).not.toMatch(/mission-control-daemon|mission-kernel|node:fs|node:process|child_process|isomorphic-git|simple-git|from ["'](?:fs|process)["']/);
     expect(sources).not.toMatch(/electron/);
+  });
+
+  it("never reads, stores, or transports provider credentials in renderer code", () => {
+    const sources = ["orrery-intelligence-adapter.ts", "orrery-intelligence-view.tsx", "orrery-intelligence-widget.tsx"].map(file => read(`src/browser/${file}`)).join("\n");
+    expect(sources).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
+    expect(sources).not.toMatch(/\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource/);
+    expect(sources).not.toMatch(/Bearer\s+\$|["']x-api-key["']|authorization\s*:/i);
+    expect(sources).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
+    expect(read("src/browser/orrery-intelligence-view.tsx")).toMatch(/type="password"/);
+  });
+
+  it("mounts Orrery Intelligence in the right shell with its own command and durable transcript", () => {
+    expect(read("src/common/mission-control-commands.ts")).toContain("orrery.intelligence.open");
+    expect(read("src/browser/orrery-intelligence-contribution.ts")).toMatch(/area:\s*["']right["']/);
+    expect(read("src/browser/orrery-intelligence-widget.tsx")).toContain("extends ReactWidget");
+    expect(read("src/browser/orrery-intelligence-adapter.ts")).toContain("window.orreryMissionControl");
   });
 
   it("defines stable typed command IDs and a ReactWidget contribution in the left shell", () => {

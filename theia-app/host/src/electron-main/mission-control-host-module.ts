@@ -42,6 +42,12 @@ export class MissionControlDaemonClient {
   cancel(input: Parameters<HostService["cancel"]>[0]): ReturnType<HostService["cancel"]> { return this.daemon.cancel(input); }
   inspect(input: Parameters<HostService["inspect"]>[0]): ReturnType<HostService["inspect"]> { return this.daemon.inspect(input); }
 
+  getIntelligenceSettings(): ReturnType<HostService["getIntelligenceSettings"]> { return this.daemon.getIntelligenceSettings(); }
+  setIntelligenceSettings(input: Parameters<HostService["setIntelligenceSettings"]>[0]): ReturnType<HostService["setIntelligenceSettings"]> { return this.daemon.setIntelligenceSettings(input); }
+  listIntelligenceMessages(input: Parameters<HostService["listIntelligenceMessages"]>[0]): ReturnType<HostService["listIntelligenceMessages"]> { return this.daemon.listIntelligenceMessages(input); }
+  sendIntelligenceMessage(input: Parameters<HostService["sendIntelligenceMessage"]>[0]): ReturnType<HostService["sendIntelligenceMessage"]> { return this.daemon.sendIntelligenceMessage(input); }
+  clearIntelligenceThread(input: Parameters<HostService["clearIntelligenceThread"]>[0]): ReturnType<HostService["clearIntelligenceThread"]> { return this.daemon.clearIntelligenceThread(input); }
+
   getSnapshot(input: Parameters<HostService["getSnapshot"]>[0]): ReturnType<HostService["getSnapshot"]> {
     return this.daemon.getSnapshot(input);
   }
@@ -154,6 +160,11 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
       list: () => this.daemon.list(),
       getSnapshot: input => this.daemon.getSnapshot(input),
       inspect: input => this.daemon.inspect(input),
+      getIntelligenceSettings: () => this.daemon.getIntelligenceSettings(),
+      setIntelligenceSettings: input => this.daemon.setIntelligenceSettings(input),
+      listIntelligenceMessages: input => this.daemon.listIntelligenceMessages(input),
+      sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessage(input),
+      clearIntelligenceThread: input => this.daemon.clearIntelligenceThread(input),
       reviewAndPromote: input => this.daemon.reviewAndPromote(input),
     };
   }

@@ -49,6 +49,16 @@ describe("Theia smoke runtime readiness", () => {
     child.pid = 2_147_483_647;
     await expect(waitForTheiaExit(child as never, 100, { isProcessAlive: () => false })).rejects.toThrow(/unobserved_process_death/);
   });
+
+  it("does not misreport a clean exit delivered just after the PID leaves the process table", async () => {
+    const child = fakeChild() as ReturnType<typeof fakeChild> & { pid: number };
+    child.pid = 2_147_483_646;
+    const pending = waitForTheiaExit(child as never, 400, { isProcessAlive: () => false });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    await expect(pending).resolves.toBeUndefined();
+  });
 });
 
 function fakeChild() {

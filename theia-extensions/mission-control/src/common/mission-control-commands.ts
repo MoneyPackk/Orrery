@@ -5,3 +5,7 @@ export const MissionControlCommands = {
   REFRESH: { id: "orrery.missionControl.refresh", label: "Refresh Missions" },
   REVIEW: { id: "orrery.missionControl.review", label: "Review Mission" },
 } as const satisfies Record<string, Command>;
+
+export const OrreryIntelligenceCommands = {
+  OPEN: { id: "orrery.intelligence.open", label: "Orrery Intelligence" },
+} as const satisfies Record<string, Command>;

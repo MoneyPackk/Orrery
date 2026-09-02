@@ -31,7 +31,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     };
 
     registerMissionControlHostIpc(ipcMain as never, host as never);
-    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "mission:v1:promote", "mission:v1:host-ready"]);
+    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:send-message", "intelligence:v1:clear-thread", "mission:v1:promote", "mission:v1:host-ready"]);
     await handlers.get("mission:v1:list")!(event("file:///theia/index.html") as never);
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
@@ -86,5 +86,71 @@ describe("Mission Control Theia Electron main contribution", () => {
     registerMissionControlHostIpc(ipcMain as never, host as never);
     await expect(handlers.get(channel)!(event("file:///theia/index.html") as never, value, "trailing")).rejects.toThrow("Invalid mission IPC payload");
     expect(host.getSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("delegates validated Orrery Intelligence payloads to the host", async () => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const host = {
+      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn() }),
+      getIntelligenceSettings: vi.fn(async () => ({ configured: false, hasCredential: false })),
+      setIntelligenceSettings: vi.fn(async () => ({ configured: true, hasCredential: true })),
+      listIntelligenceMessages: vi.fn(async () => ({ threadId: "main", messages: [], settings: { configured: true, hasCredential: true } })),
+      sendIntelligenceMessage: vi.fn(async () => ({ request: {}, reply: {} })),
+      clearIntelligenceThread: vi.fn(async () => ({ threadId: "main", messages: [], settings: { configured: true, hasCredential: true } })),
+    };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    const trusted = () => event("file:///theia/index.html") as never;
+    await handlers.get("intelligence:v1:get-settings")!(trusted());
+    await handlers.get("intelligence:v1:set-settings")!(trusted(), { intentId: "s-1", provider: "anthropic", model: "claude-x", baseUrl: "https://api.example.com", apiKey: "key" });
+    await handlers.get("intelligence:v1:list-messages")!(trusted(), { threadId: "main" });
+    await handlers.get("intelligence:v1:send-message")!(trusted(), { intentId: "i-1", threadId: "main", text: "hello" });
+    await handlers.get("intelligence:v1:send-message")!(trusted(), { intentId: "i-2", threadId: "main", text: "hello", missionId: "mission-1" });
+    await handlers.get("intelligence:v1:clear-thread")!(trusted(), { intentId: "c-1", threadId: "main" });
+    expect(host.getIntelligenceSettings).toHaveBeenCalledTimes(1);
+    expect(host.setIntelligenceSettings).toHaveBeenCalledWith({ intentId: "s-1", provider: "anthropic", model: "claude-x", baseUrl: "https://api.example.com", apiKey: "key" });
+    expect(host.sendIntelligenceMessage).toHaveBeenCalledWith({ intentId: "i-2", threadId: "main", text: "hello", missionId: "mission-1" });
+    expect(host.clearIntelligenceThread).toHaveBeenCalledWith({ intentId: "c-1", threadId: "main" });
+  });
+
+  it.each([
+    ["intelligence:v1:set-settings", { intentId: "s", provider: "unknown-provider", model: "m", baseUrl: "https://api.example.com", apiKey: "k" }],
+    ["intelligence:v1:set-settings", { intentId: "s", provider: "anthropic", model: "m", baseUrl: "https://api.example.com", apiKey: "x".repeat(5000) }],
+    ["intelligence:v1:set-settings", { intentId: "s", provider: "anthropic", model: "m", baseUrl: "https://api.example.com", apiKey: "k", extra: true }],
+    ["intelligence:v1:send-message", { intentId: "i", threadId: "main", text: "" }],
+    ["intelligence:v1:send-message", { intentId: "i", threadId: "main", text: "x".repeat(9000) }],
+    ["intelligence:v1:send-message", { intentId: "i", threadId: "main", text: "hi", missionId: "" }],
+    ["intelligence:v1:send-message", { intentId: "i", threadId: "main", text: "hi", unexpected: 1 }],
+    ["intelligence:v1:list-messages", { threadId: "" }],
+    ["intelligence:v1:list-messages", { threadId: "__proto__" }],
+    ["intelligence:v1:list-messages", { threadId: "constructor" }],
+    ["intelligence:v1:list-messages", { threadId: "prototype" }],
+    ["intelligence:v1:send-message", { intentId: "i", threadId: "__proto__", text: "hi" }],
+    ["intelligence:v1:clear-thread", { intentId: "c", threadId: "__proto__" }],
+    ["intelligence:v1:clear-thread", { threadId: "main" }],
+  ])("rejects invalid %s payloads", async (channel, value) => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const host = {
+      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn() }),
+      setIntelligenceSettings: vi.fn(), listIntelligenceMessages: vi.fn(), sendIntelligenceMessage: vi.fn(), clearIntelligenceThread: vi.fn(),
+    };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    await expect(handlers.get(channel)!(event("file:///theia/index.html") as never, value)).rejects.toThrow("Invalid mission IPC payload");
+    expect(host.setIntelligenceSettings).not.toHaveBeenCalled();
+    expect(host.sendIntelligenceMessage).not.toHaveBeenCalled();
+    expect(host.listIntelligenceMessages).not.toHaveBeenCalled();
+    expect(host.clearIntelligenceThread).not.toHaveBeenCalled();
+  });
+
+  it("refuses Orrery Intelligence requests from untrusted frames", async () => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const host = { requestContext: () => null, getIntelligenceSettings: vi.fn(), sendIntelligenceMessage: vi.fn() };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    await expect(handlers.get("intelligence:v1:get-settings")!(event("https://attacker.invalid") as never)).rejects.toThrow(/untrusted/i);
+    await expect(handlers.get("intelligence:v1:send-message")!(event("file:///theia/index.html", true) as never, { intentId: "i", threadId: "main", text: "hi" })).rejects.toThrow(/untrusted/i);
+    expect(host.getIntelligenceSettings).not.toHaveBeenCalled();
+    expect(host.sendIntelligenceMessage).not.toHaveBeenCalled();
   });
 });

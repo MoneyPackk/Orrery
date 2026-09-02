@@ -8,6 +8,9 @@ import type { ProposeRepositoryInput } from "./contract";
 import { confirmTrustedRepository } from "./trusted-repository";
 import { confirmTrustedReview } from "./trusted-review";
 import { completeParentBootstrap } from "../scripts/daemon-bootstrap";
+import { IntelligenceStore, MAX_MESSAGE_LENGTH } from "./intelligence-store";
+import { requestIntelligenceReply, type FetchLike } from "./intelligence-provider";
+import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceTranscript } from "./intelligence-contract";
 
 interface SharedClient {
   connect(endpoint: { host: string; port: number; version: string }, token: string): Promise<void>;
@@ -34,6 +37,9 @@ export interface MissionControlDaemonClientDependencies {
   parentWindow?: () => BrowserWindow | null;
   daemonEntryPath?: string;
   stopDaemon?: typeof stopOwnedDaemon;
+  createIntelligenceStore?: (runtimeDirectory: string) => IntelligenceStore;
+  requestIntelligenceReply?: typeof requestIntelligenceReply;
+  fetchImpl?: FetchLike;
 }
 export class MissionControlDaemonClient implements MissionIpcService {
   private client: SharedClient | undefined;
@@ -45,6 +51,8 @@ export class MissionControlDaemonClient implements MissionIpcService {
   private lifecycle = 0;
   private disconnecting?: Promise<void>;
   private shuttingDown = false;
+  private intelligenceStore?: Promise<IntelligenceStore>;
+  private intelligenceCalls: number[] = [];
   constructor(private readonly dependencies: MissionControlDaemonClientDependencies = {}) {}
   proposeRepository: MissionIpcService["proposeRepository"] = async (input) => this.mutate((client) => client.proposeRepository(input));
   async intakeRepository(input: ProposeRepositoryInput, parent: BrowserWindow): Promise<{ repositoryId: string; canonicalRoot: string; fingerprint: string }> {
@@ -75,6 +83,63 @@ export class MissionControlDaemonClient implements MissionIpcService {
     const approvalCapability = this.approvals.issue(approvalInput);
     return (await this.connected()).promoteMission({ ...approvalInput, intentId: input.intentId, approvalCapability });
   }
+  async getIntelligenceSettings(): Promise<IntelligenceSettingsStatus> {
+    return (await this.intelligence()).readSettingsStatus();
+  }
+
+  async setIntelligenceSettings(input: IntelligenceSettingsInput): Promise<IntelligenceSettingsStatus> {
+    if (input.apiKey.length > 4_096) throw new Error("Provider credential is too long.");
+    return (await this.intelligence()).writeCredentials({ provider: input.provider, model: input.model, baseUrl: input.baseUrl, apiKey: input.apiKey });
+  }
+
+  async listIntelligenceMessages(input: IntelligenceThreadInput): Promise<IntelligenceTranscript> {
+    const store = await this.intelligence();
+    const [messages, settings] = await Promise.all([store.readThread(input.threadId), store.readSettingsStatus()]);
+    return { threadId: input.threadId, messages, settings };
+  }
+
+  async clearIntelligenceThread(input: IntelligenceClearInput): Promise<IntelligenceTranscript> {
+    const store = await this.intelligence();
+    await store.clearThread(input.threadId);
+    return { threadId: input.threadId, messages: [], settings: await store.readSettingsStatus() };
+  }
+
+  async sendIntelligenceMessage(input: IntelligenceSendInput): Promise<IntelligenceSendResult> {
+    if (input.text.length > MAX_MESSAGE_LENGTH) throw new Error("Message exceeds the supported length.");
+    const store = await this.intelligence();
+    const replayed = await store.findByIntent(input.threadId, input.intentId);
+    if (replayed) return replayed;
+    this.assertIntelligenceRate();
+    const credentials = await store.readCredentials();
+    if (!credentials) throw new Error("Orrery Intelligence is not configured. Add your provider key and model first.");
+    const history = await store.readThread(input.threadId);
+    const reply = await (this.dependencies.requestIntelligenceReply ?? requestIntelligenceReply)(
+      { credentials, history: history.map(message => ({ role: message.role, text: message.text })), prompt: input.text },
+      this.dependencies.fetchImpl,
+    );
+    const appended = await store.appendExchange({ threadId: input.threadId, intentId: input.intentId, missionId: input.missionId, request: input.text, reply });
+    return { request: appended.request, reply: appended.reply };
+  }
+
+  /** Bounds provider spend and abuse from a compromised renderer: 20 requests per rolling minute. */
+  private assertIntelligenceRate(now = Date.now()): void {
+    const windowMs = 60_000;
+    this.intelligenceCalls = this.intelligenceCalls.filter(stamp => now - stamp < windowMs);
+    if (this.intelligenceCalls.length >= 20) throw new Error("Too many Orrery Intelligence requests. Wait a moment and try again.");
+    this.intelligenceCalls.push(now);
+  }
+
+  private intelligence(): Promise<IntelligenceStore> {
+    // Cache the promise, not the awaited value, so concurrent cold starts share one store and one write lock.
+    return this.intelligenceStore ??= (async () => {
+      const runtime = await (this.dependencies.createRuntimeDirectory ?? createRuntimeDirectory)();
+      return (this.dependencies.createIntelligenceStore ?? (directory => new IntelligenceStore(directory)))(runtime);
+    })().catch(error => {
+      this.intelligenceStore = undefined;
+      throw error;
+    });
+  }
+
   async disconnect(): Promise<void> {
     if (this.disconnecting) return this.disconnecting;
     this.shuttingDown = true;
