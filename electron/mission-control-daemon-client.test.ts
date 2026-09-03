@@ -383,6 +383,51 @@ describe("MissionControlDaemonClient gated MCP tools", () => {
     expect(removal.reason).toMatch(/Server removed/);
   });
 
+  // These pin the boundary that makes model-driven tool selection survivable: consent for a
+  // dangerous tool can never be remembered, so the human is prompted on every such call.
+  it.each(["write", "destructive", "network", "spend"] as const)(
+    "refuses to remember a standing allow for a %s tool",
+    async (risk) => {
+      const { adapter } = await harness({ tools: [{ name: "act", risk }] });
+      await adapter.registerMcpServer(stdioServer, parent);
+      await expect(adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "act", decision: "allow" }, parent))
+        .rejects.toThrow(/confirmed every time/i);
+    },
+  );
+
+  it("remembers a standing allow only for a read tool", async () => {
+    const { adapter, confirmToolCall } = await harness({ tools: [{ name: "read_file", risk: "read" }] });
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.setMcpToolDecision({ intentId: "d2", serverId: "files", name: "read_file", decision: "allow" }, parent);
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    expect(confirmToolCall).not.toHaveBeenCalled();
+  });
+
+  it("still prompts for a dangerous tool even if a stale allow is present in the store", async () => {
+    // Simulates a tampered or downgraded policy file: the stored decision must not be trusted.
+    const { adapter, confirmToolCall, directory } = await harness({ tools: [{ name: "wipe", risk: "destructive" }] });
+    await adapter.registerMcpServer(stdioServer, parent);
+    const path = join(directory, "mcp-servers.json");
+    const store = JSON.parse(await readFile(path, "utf8")) as { servers: Array<{ decisions: Record<string, string> }> };
+    store.servers[0].decisions.wipe = "allow";
+    await writeFile(path, JSON.stringify(store), "utf8");
+    await adapter.invokeMcpTool({ intentId: "i2", serverId: "files", name: "wipe", args: {} }, parent);
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-derives risk from the declaration, so a downgraded stored risk cannot skip the prompt", async () => {
+    const { adapter, confirmToolCall, directory } = await harness({ tools: [{ name: "delete_file", risk: "destructive" }] });
+    await adapter.registerMcpServer(stdioServer, parent);
+    const path = join(directory, "mcp-servers.json");
+    const store = JSON.parse(await readFile(path, "utf8")) as { servers: Array<{ tools: Array<{ risk: string }>; decisions: Record<string, string> }> };
+    store.servers[0].tools[0].risk = "read";
+    store.servers[0].decisions.delete_file = "allow";
+    await writeFile(path, JSON.stringify(store), "utf8");
+    await adapter.invokeMcpTool({ intentId: "i3", serverId: "files", name: "delete_file", args: {} }, parent);
+    // The name still classifies as destructive, so the remembered allow must be ignored.
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+  });
+
   it("does not audit the removal of a server that was never registered", async () => {
     const { adapter } = await harness();
     await adapter.removeMcpServer({ intentId: "x2", serverId: "absent" });
