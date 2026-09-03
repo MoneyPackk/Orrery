@@ -81,4 +81,24 @@ describe("mission control Theia extension structure", () => {
     expect(sources).not.toMatch(/\.\.\/\.\.\/\.\.\/|mission-control-daemon|mission-kernel|node:fs|node:process|child_process|simple-git|isomorphic-git/);
     expect(read("README.md")).toContain("It is an extension package, not a standalone application or distribution.");
   });
+
+  it("keeps MCP transport and consent out of the extension and the renderer", () => {
+    const contribution = read("src/electron-main/mission-control-electron-main-contribution.ts");
+    const contracts = read("src/common/mission-control-contracts.ts");
+    const api = read("src/electron-browser/mission-control-preload-api.ts");
+    // Spawning, sockets, and the consent modal belong to Electron main, never here.
+    // Matches code constructs only, so prose in doc comments does not trip this.
+    expect(contribution + contracts + api).not.toMatch(/\bspawn\s*\(|StdioMcpTransport|HttpMcpTransport|\bnew BrowserWindow\b|"jsonrpc"/);
+    // The renderer's view of a server must expose a redacted origin, never a command or URL.
+    const status = contracts.slice(contracts.indexOf("interface McpServerStatus"), contracts.indexOf("interface McpToolStatus"));
+    expect(status).toMatch(/readonly origin: string/);
+    // Field declarations only, so the doc comment explaining what `origin` holds does not trip this.
+    expect(status).not.toMatch(/readonly (command|endpoint|args)\b/);
+    // Registering a server, granting a standing permission, and running a tool each show a
+    // native modal, so all three must be window-bound rather than passed through `guarded`.
+    expect(contribution).toContain("context.invokeMcpTool(parseMcpInvoke(values[0]))");
+    expect(contribution).toContain("context.registerMcpServer(parseMcpRegister(values[0]))");
+    expect(contribution).toContain("context.setMcpToolDecision(parseMcpSetDecision(values[0]))");
+    expect(contribution).not.toMatch(/guarded\(parseMcpInvoke|guarded\(parseMcpRegister|guarded\(parseMcpSetDecision/);
+  });
 });

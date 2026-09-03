@@ -15,6 +15,101 @@ export const INTELLIGENCE_SET_SETTINGS_CHANNEL = "intelligence:v1:set-settings";
 export const INTELLIGENCE_LIST_MESSAGES_CHANNEL = "intelligence:v1:list-messages";
 export const INTELLIGENCE_SEND_MESSAGE_CHANNEL = "intelligence:v1:send-message";
 export const INTELLIGENCE_CLEAR_THREAD_CHANNEL = "intelligence:v1:clear-thread";
+export const MCP_LIST_CATALOG_CHANNEL = "mcp:v1:list-catalog";
+export const MCP_REGISTER_SERVER_CHANNEL = "mcp:v1:register-server";
+export const MCP_REMOVE_SERVER_CHANNEL = "mcp:v1:remove-server";
+export const MCP_SET_DECISION_CHANNEL = "mcp:v1:set-decision";
+export const MCP_INVOKE_TOOL_CHANNEL = "mcp:v1:invoke-tool";
+export const MCP_LIST_ACTIVITY_CHANNEL = "mcp:v1:list-activity";
+
+/** How Orrery reaches a server. Local servers are spawned; remote servers are called over HTTPS. */
+export type McpTransportKind = "stdio" | "http";
+/** What a tool can do, worst case, as classified by Orrery from the server's declaration. */
+export type McpToolRisk = "read" | "write" | "destructive" | "network" | "spend";
+export type McpToolDecision = "ask" | "allow" | "deny";
+
+/** A registered server as shown to the renderer. Commands, argument vectors, and full URLs stay in main. */
+export interface McpServerStatus {
+  readonly serverId: string;
+  readonly label: string;
+  readonly transport: McpTransportKind;
+  /** stdio: the executable basename. http: the endpoint host. */
+  readonly origin: string;
+  readonly enabled: boolean;
+  readonly toolCount: number;
+  readonly registeredAt: string;
+}
+
+export interface McpToolStatus {
+  readonly serverId: string;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  readonly risk: McpToolRisk;
+  readonly decision: McpToolDecision;
+  /** True when consent for this tool can never be remembered. */
+  readonly alwaysAsk: boolean;
+}
+
+export interface McpCatalog {
+  readonly servers: ReadonlyArray<McpServerStatus>;
+  readonly tools: ReadonlyArray<McpToolStatus>;
+}
+
+export interface McpRegisterInput {
+  readonly intentId: string;
+  readonly serverId: string;
+  readonly label: string;
+  readonly transport: McpTransportKind;
+  readonly command?: string;
+  readonly args?: ReadonlyArray<string>;
+  readonly endpoint?: string;
+}
+
+export interface McpRemoveServerInput {
+  readonly intentId: string;
+  readonly serverId: string;
+}
+
+export interface McpSetDecisionInput {
+  readonly intentId: string;
+  readonly serverId: string;
+  readonly name: string;
+  readonly decision: McpToolDecision;
+}
+
+export interface McpInvokeInput {
+  readonly intentId: string;
+  readonly serverId: string;
+  readonly name: string;
+  readonly args: Readonly<Record<string, unknown>>;
+}
+
+/** `content` is untrusted server output: render as plain text, never as markup. */
+export interface McpInvokeResult {
+  readonly serverId: string;
+  readonly name: string;
+  readonly risk: McpToolRisk;
+  readonly content: string;
+  readonly isError: boolean;
+  readonly truncated: boolean;
+  readonly invokedAt: string;
+  readonly sequence: number;
+}
+
+export interface McpActivityEntry {
+  readonly sequence: number;
+  readonly serverId: string;
+  readonly name: string;
+  readonly risk: McpToolRisk;
+  readonly outcome: "allowed" | "denied" | "failed";
+  readonly reason?: string;
+  readonly at: string;
+}
+
+export interface McpActivity {
+  readonly entries: ReadonlyArray<McpActivityEntry>;
+}
 
 export type IntelligenceProviderKind = "openai-compatible" | "anthropic" | "ollama";
 export type IntelligenceRole = "user" | "assistant";
@@ -172,6 +267,12 @@ export interface MissionControlPublicApi {
   listIntelligenceMessages(input: IntelligenceThreadInput): Promise<IntelligenceTranscript>;
   sendIntelligenceMessage(input: IntelligenceSendInput): Promise<IntelligenceSendResult>;
   clearIntelligenceThread(input: IntelligenceClearInput): Promise<IntelligenceTranscript>;
+  listMcpCatalog(): Promise<McpCatalog>;
+  registerMcpServer(input: McpRegisterInput): Promise<McpCatalog>;
+  removeMcpServer(input: McpRemoveServerInput): Promise<McpCatalog>;
+  setMcpToolDecision(input: McpSetDecisionInput): Promise<McpCatalog>;
+  invokeMcpTool(input: McpInvokeInput): Promise<McpInvokeResult>;
+  listMcpActivity(): Promise<McpActivity>;
 }
 
 export const MissionControlHostService = Symbol("MissionControlHostService");

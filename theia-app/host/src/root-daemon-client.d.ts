@@ -18,6 +18,12 @@ declare module "@orrery/root-mission-control-daemon-client" {
     clearIntelligenceThread(input: Parameters<MissionControlHostService["clearIntelligenceThread"]>[0]): ReturnType<MissionControlHostService["clearIntelligenceThread"]>;
     reviewAndPromote(input: MissionReviewInput): ReturnType<MissionControlHostService["reviewAndPromote"]>;
     reviewAndPromoteInWindow(input: MissionReviewInput, parent: BrowserWindow): ReturnType<MissionControlHostService["reviewAndPromote"]>;
+    listMcpCatalog(): ReturnType<MissionControlHostService["listMcpCatalog"]>;
+    registerMcpServer(input: Parameters<MissionControlHostService["registerMcpServer"]>[0], parent: BrowserWindow): ReturnType<MissionControlHostService["registerMcpServer"]>;
+    removeMcpServer(input: Parameters<MissionControlHostService["removeMcpServer"]>[0]): ReturnType<MissionControlHostService["removeMcpServer"]>;
+    setMcpToolDecision(input: Parameters<MissionControlHostService["setMcpToolDecision"]>[0], parent: BrowserWindow): ReturnType<MissionControlHostService["setMcpToolDecision"]>;
+    listMcpActivity(): ReturnType<MissionControlHostService["listMcpActivity"]>;
+    invokeMcpTool(input: Parameters<MissionControlHostService["invokeMcpTool"]>[0], parent: BrowserWindow): ReturnType<MissionControlHostService["invokeMcpTool"]>;
     disconnect(): Promise<void>;
   }
 }

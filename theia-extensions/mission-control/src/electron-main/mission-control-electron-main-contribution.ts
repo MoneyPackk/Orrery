@@ -8,16 +8,21 @@ import {
   MISSION_LIST_CHANNEL,
   MISSION_REVIEW_CHANNEL,
   INTELLIGENCE_GET_SETTINGS_CHANNEL, INTELLIGENCE_SET_SETTINGS_CHANNEL, INTELLIGENCE_LIST_MESSAGES_CHANNEL, INTELLIGENCE_SEND_MESSAGE_CHANNEL, INTELLIGENCE_CLEAR_THREAD_CHANNEL,
+  MCP_LIST_CATALOG_CHANNEL, MCP_REGISTER_SERVER_CHANNEL, MCP_REMOVE_SERVER_CHANNEL, MCP_SET_DECISION_CHANNEL, MCP_INVOKE_TOOL_CHANNEL, MCP_LIST_ACTIVITY_CHANNEL,
   type MissionReviewInput,
   type MissionPromotionResult,
   type MissionSnapshotInput,
   type RepositoryIntakeInput, type MissionCreateInput, type MissionRunInput, type MissionCancelInput, type MissionInspectInput,
   type IntelligenceSettingsInput, type IntelligenceThreadInput, type IntelligenceSendInput, type IntelligenceClearInput, type IntelligenceProviderKind,
+  type McpRegisterInput, type McpRemoveServerInput, type McpSetDecisionInput, type McpInvokeInput, type McpInvokeResult, type McpCatalog, type McpTransportKind, type McpToolDecision,
 } from "../common/mission-control-contracts";
 
 export interface MissionControlHostRequestContext {
   intakeRepository(input: RepositoryIntakeInput): Promise<import("../common/mission-control-contracts").RepositoryIntakeResult>;
   reviewAndPromote(input: MissionReviewInput): Promise<MissionPromotionResult>;
+  registerMcpServer(input: McpRegisterInput): Promise<McpCatalog>;
+  setMcpToolDecision(input: McpSetDecisionInput): Promise<McpCatalog>;
+  invokeMcpTool(input: McpInvokeInput): Promise<McpInvokeResult>;
 }
 
 export interface ElectronMainMissionControlHostService extends MissionControlHostService {
@@ -117,6 +122,80 @@ function parseReview(value: unknown): MissionReviewInput {
   return { intentId: input.intentId, missionId: input.missionId, planRevisionId: input.planRevisionId, decision: input.decision };
 }
 
+const MCP_TRANSPORTS: ReadonlyArray<McpTransportKind> = ["stdio", "http"];
+const MCP_DECISIONS: ReadonlyArray<McpToolDecision> = ["ask", "allow", "deny"];
+// Tool and server identifiers become object keys in the policy store, so the same
+// prototype-bearing names are refused here as for conversation identifiers.
+const isMcpId = (value: unknown): value is string =>
+  typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(value) && !FORBIDDEN_THREAD_IDS.has(value);
+
+function parseMcpRegister(value: unknown): McpRegisterInput {
+  if (!isRecord(value)) throw new Error("Invalid mission IPC payload");
+  const transport = value.transport;
+  if (!MCP_TRANSPORTS.includes(transport as McpTransportKind)) throw new Error("Invalid mission IPC payload");
+  if (transport === "stdio") {
+    const input = exactRecord(value, ["intentId", "serverId", "label", "transport", "command", "args"]);
+    const args = input.args;
+    if (
+      !isId(input.intentId) || !isMcpId(input.serverId) || !isText(input.label)
+      || typeof input.command !== "string" || input.command.trim().length === 0 || input.command.length > 1_024
+      || !Array.isArray(args) || args.length > 50
+      || !args.every(argument => typeof argument === "string" && argument.length <= 1_024)
+    ) {
+      throw new Error("Invalid mission IPC payload");
+    }
+    return { intentId: input.intentId, serverId: input.serverId, label: input.label, transport: "stdio", command: input.command, args: [...args] as ReadonlyArray<string> };
+  }
+  const input = exactRecord(value, ["intentId", "serverId", "label", "transport", "endpoint"]);
+  if (!isId(input.intentId) || !isMcpId(input.serverId) || !isText(input.label) || typeof input.endpoint !== "string" || input.endpoint.trim().length === 0 || input.endpoint.length > 2_048) {
+    throw new Error("Invalid mission IPC payload");
+  }
+  return { intentId: input.intentId, serverId: input.serverId, label: input.label, transport: "http", endpoint: input.endpoint };
+}
+
+function parseMcpRemoveServer(value: unknown): McpRemoveServerInput {
+  const input = exactRecord(value, ["intentId", "serverId"]);
+  if (!isId(input.intentId) || !isMcpId(input.serverId)) throw new Error("Invalid mission IPC payload");
+  return { intentId: input.intentId, serverId: input.serverId };
+}
+
+function parseMcpSetDecision(value: unknown): McpSetDecisionInput {
+  const input = exactRecord(value, ["intentId", "serverId", "name", "decision"]);
+  if (!isId(input.intentId) || !isMcpId(input.serverId) || !isMcpId(input.name) || !MCP_DECISIONS.includes(input.decision as McpToolDecision)) {
+    throw new Error("Invalid mission IPC payload");
+  }
+  return { intentId: input.intentId, serverId: input.serverId, name: input.name, decision: input.decision as McpToolDecision };
+}
+
+function parseMcpInvoke(value: unknown): McpInvokeInput {
+  const input = exactRecord(value, ["intentId", "serverId", "name", "args"]);
+  if (!isId(input.intentId) || !isMcpId(input.serverId) || !isMcpId(input.name) || !isRecord(input.args)) {
+    throw new Error("Invalid mission IPC payload");
+  }
+  // Bound by traversal, not by serializing first: structured clone preserves shared
+  // references, so a small payload can expand enormously under JSON.stringify.
+  assertBoundedGraph(input.args);
+  return { intentId: input.intentId, serverId: input.serverId, name: input.name, args: input.args };
+}
+
+/** Rejects argument graphs too large or too deep to process, before any serialization. */
+function assertBoundedGraph(value: unknown, depth = 0, budget = { nodes: 0 }): void {
+  if (depth > 8 || (budget.nodes += 1) > 5_000) throw new Error("Invalid mission IPC payload");
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "string" && value.length > 100_000) throw new Error("Invalid mission IPC payload");
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 1_000) throw new Error("Invalid mission IPC payload");
+    for (const item of value) assertBoundedGraph(item, depth + 1, budget);
+    return;
+  }
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    if (key.length > 200) throw new Error("Invalid mission IPC payload");
+    assertBoundedGraph((value as Record<string, unknown>)[key], depth + 1, budget);
+  }
+}
+
 function trustedContext(event: IpcMainInvokeEvent, host: ElectronMainMissionControlHostService): MissionControlHostRequestContext {
   const sameFrame = event.senderFrame === event.sender.mainFrame;
   const context = sameFrame ? host.requestContext(event.sender, event.senderFrame) : null;
@@ -150,6 +229,26 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
     [INTELLIGENCE_LIST_MESSAGES_CHANNEL, guarded(parseIntelligenceThread, input => host.listIntelligenceMessages(input))],
     [INTELLIGENCE_SEND_MESSAGE_CHANNEL, guarded(parseIntelligenceSend, input => host.sendIntelligenceMessage(input))],
     [INTELLIGENCE_CLEAR_THREAD_CHANNEL, guarded(parseIntelligenceClear, input => host.clearIntelligenceThread(input))],
+    [MCP_LIST_CATALOG_CHANNEL, trusted(() => host.listMcpCatalog())],
+    [MCP_REMOVE_SERVER_CHANNEL, guarded(parseMcpRemoveServer, input => host.removeMcpServer(input))],
+    [MCP_LIST_ACTIVITY_CHANNEL, trusted(() => host.listMcpActivity())],
+    // Registering a server, granting a standing permission, and running a tool all
+    // require native confirmation, so each is bound to the exact originating window.
+    [MCP_REGISTER_SERVER_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      const context = trustedContext(event, host);
+      if (values.length !== 1) throw new Error("Invalid mission IPC payload");
+      return context.registerMcpServer(parseMcpRegister(values[0]));
+    }],
+    [MCP_SET_DECISION_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      const context = trustedContext(event, host);
+      if (values.length !== 1) throw new Error("Invalid mission IPC payload");
+      return context.setMcpToolDecision(parseMcpSetDecision(values[0]));
+    }],
+    [MCP_INVOKE_TOOL_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      const context = trustedContext(event, host);
+      if (values.length !== 1) throw new Error("Invalid mission IPC payload");
+      return context.invokeMcpTool(parseMcpInvoke(values[0]));
+    }],
     [MISSION_REVIEW_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
       const context = trustedContext(event, host);
       if (values.length !== 1) throw new Error("Invalid mission IPC payload");

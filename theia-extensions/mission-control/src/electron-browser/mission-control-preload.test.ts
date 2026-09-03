@@ -30,6 +30,7 @@ describe("Theia Mission Control preload entry point", () => {
     expect(Object.keys(api)).toEqual([
       "intakeRepository", "create", "run", "cancel", "list", "getSnapshot", "inspect", "reviewAndPromote",
       "getIntelligenceSettings", "setIntelligenceSettings", "listIntelligenceMessages", "sendIntelligenceMessage", "clearIntelligenceThread",
+      "listMcpCatalog", "registerMcpServer", "removeMcpServer", "setMcpToolDecision", "invokeMcpTool", "listMcpActivity",
     ]);
 
     await api.list();

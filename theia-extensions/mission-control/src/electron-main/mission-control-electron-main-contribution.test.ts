@@ -31,7 +31,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     };
 
     registerMissionControlHostIpc(ipcMain as never, host as never);
-    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:send-message", "intelligence:v1:clear-thread", "mission:v1:promote", "mission:v1:host-ready"]);
+    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:send-message", "intelligence:v1:clear-thread", "mcp:v1:list-catalog", "mcp:v1:remove-server", "mcp:v1:list-activity", "mcp:v1:register-server", "mcp:v1:set-decision", "mcp:v1:invoke-tool", "mission:v1:promote", "mission:v1:host-ready"]);
     await handlers.get("mission:v1:list")!(event("file:///theia/index.html") as never);
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
@@ -113,6 +113,79 @@ describe("Mission Control Theia Electron main contribution", () => {
     expect(host.clearIntelligenceThread).toHaveBeenCalledWith({ intentId: "c-1", threadId: "main" });
   });
 
+  it("delegates validated MCP payloads to the host and binds every consenting operation to the sending window", async () => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const catalog = { servers: [], tools: [] };
+    const context = {
+      reviewAndPromote: vi.fn(),
+      intakeRepository: vi.fn(),
+      registerMcpServer: vi.fn(async () => catalog),
+      setMcpToolDecision: vi.fn(async () => catalog),
+      invokeMcpTool: vi.fn(async () => ({ serverId: "files", name: "read_file", risk: "read", content: "ok", isError: false, truncated: false, invokedAt: "now", sequence: 1 })),
+    };
+    const host = {
+      requestContext: () => context,
+      listMcpCatalog: vi.fn(async () => catalog),
+      removeMcpServer: vi.fn(async () => catalog),
+      listMcpActivity: vi.fn(async () => ({ entries: [] })),
+      registerMcpServer: vi.fn(),
+      setMcpToolDecision: vi.fn(),
+      invokeMcpTool: vi.fn(),
+    };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    const trusted = () => event("file:///theia/index.html") as never;
+    await handlers.get("mcp:v1:list-catalog")!(trusted());
+    await handlers.get("mcp:v1:list-activity")!(trusted());
+    await handlers.get("mcp:v1:register-server")!(trusted(), { intentId: "r-1", serverId: "files", label: "Files", transport: "stdio", command: "/usr/bin/mcp", args: ["--root"] });
+    await handlers.get("mcp:v1:register-server")!(trusted(), { intentId: "r-2", serverId: "remote", label: "Remote", transport: "http", endpoint: "https://tools.example.com/mcp" });
+    await handlers.get("mcp:v1:remove-server")!(trusted(), { intentId: "x-1", serverId: "files" });
+    await handlers.get("mcp:v1:set-decision")!(trusted(), { intentId: "d-1", serverId: "files", name: "read_file", decision: "allow" });
+    await handlers.get("mcp:v1:invoke-tool")!(trusted(), { intentId: "i-1", serverId: "files", name: "read_file", args: { path: "a" } });
+    expect(host.listMcpCatalog).toHaveBeenCalledTimes(1);
+    expect(host.removeMcpServer).toHaveBeenCalledWith({ intentId: "x-1", serverId: "files" });
+    // Registration, permission grants, and invocation each show a modal, so all three must
+    // travel through the window-bound context rather than the context-free host methods.
+    expect(context.registerMcpServer).toHaveBeenCalledWith({ intentId: "r-2", serverId: "remote", label: "Remote", transport: "http", endpoint: "https://tools.example.com/mcp" });
+    expect(context.setMcpToolDecision).toHaveBeenCalledWith({ intentId: "d-1", serverId: "files", name: "read_file", decision: "allow" });
+    expect(context.invokeMcpTool).toHaveBeenCalledWith({ intentId: "i-1", serverId: "files", name: "read_file", args: { path: "a" } });
+    expect(host.registerMcpServer).not.toHaveBeenCalled();
+    expect(host.setMcpToolDecision).not.toHaveBeenCalled();
+    expect(host.invokeMcpTool).not.toHaveBeenCalled();
+  });
+
+  it("refuses an argument graph that would expand enormously under serialization", async () => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const invokeMcpTool = vi.fn(async () => undefined);
+    const host = { requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn(), invokeMcpTool, registerMcpServer: vi.fn(), setMcpToolDecision: vi.fn() }) };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    // Structured clone preserves shared references, so a tiny payload can explode when
+    // serialized. Each level doubles, giving 2^20 leaves from 20 objects.
+    let shared: Record<string, unknown> = { leaf: "x" };
+    for (let depth = 0; depth < 20; depth += 1) shared = { a: shared, b: shared };
+    await expect(handlers.get("mcp:v1:invoke-tool")!(event("file:///theia/index.html") as never, { intentId: "i", serverId: "s", name: "t", args: shared })).rejects.toThrow("Invalid mission IPC payload");
+    expect(invokeMcpTool).not.toHaveBeenCalled();
+    // A reasonable nested payload is still accepted.
+    await handlers.get("mcp:v1:invoke-tool")!(event("file:///theia/index.html") as never, { intentId: "i", serverId: "s", name: "t", args: { a: { b: { c: "ok" } } } });
+    expect(invokeMcpTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses every consenting MCP operation from an untrusted frame", async () => {
+    const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
+    const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const host = { requestContext: () => null, invokeMcpTool: vi.fn(), registerMcpServer: vi.fn(), setMcpToolDecision: vi.fn(), listMcpCatalog: vi.fn() };
+    registerMissionControlHostIpc(ipcMain as never, host as never);
+    const untrusted = () => event("file:///theia/index.html", true) as never;
+    await expect(handlers.get("mcp:v1:invoke-tool")!(untrusted(), { intentId: "i", serverId: "s", name: "t", args: {} })).rejects.toThrow(/untrusted/i);
+    await expect(handlers.get("mcp:v1:register-server")!(untrusted(), { intentId: "r", serverId: "s", label: "L", transport: "stdio", command: "/usr/bin/x", args: [] })).rejects.toThrow(/untrusted/i);
+    await expect(handlers.get("mcp:v1:set-decision")!(untrusted(), { intentId: "d", serverId: "s", name: "t", decision: "allow" })).rejects.toThrow(/untrusted/i);
+    await expect(handlers.get("mcp:v1:list-catalog")!(untrusted())).rejects.toThrow(/untrusted/i);
+    expect(host.invokeMcpTool).not.toHaveBeenCalled();
+    expect(host.registerMcpServer).not.toHaveBeenCalled();
+    expect(host.setMcpToolDecision).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["intelligence:v1:set-settings", { intentId: "s", provider: "unknown-provider", model: "m", baseUrl: "https://api.example.com", apiKey: "k" }],
     ["intelligence:v1:set-settings", { intentId: "s", provider: "anthropic", model: "m", baseUrl: "https://api.example.com", apiKey: "x".repeat(5000) }],
@@ -128,17 +201,37 @@ describe("Mission Control Theia Electron main contribution", () => {
     ["intelligence:v1:send-message", { intentId: "i", threadId: "__proto__", text: "hi" }],
     ["intelligence:v1:clear-thread", { intentId: "c", threadId: "__proto__" }],
     ["intelligence:v1:clear-thread", { threadId: "main" }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "__proto__", label: "L", transport: "stdio", command: "/usr/bin/x", args: [] }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "ftp", command: "/usr/bin/x", args: [] }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "stdio", command: "/usr/bin/x", args: [1] }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "stdio", command: "", args: [] }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "stdio", command: "/usr/bin/x", args: [], endpoint: "https://e.com" }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "http", endpoint: "https://e.com", command: "/usr/bin/x" }],
+    ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "http" }],
+    ["mcp:v1:remove-server", { serverId: "files" }],
+    ["mcp:v1:remove-server", { intentId: "x", serverId: "../escape" }],
+    ["mcp:v1:set-decision", { intentId: "d", serverId: "files", name: "read_file", decision: "maybe" }],
+    ["mcp:v1:set-decision", { intentId: "d", serverId: "files", name: "__proto__", decision: "allow" }],
+    ["mcp:v1:invoke-tool", { intentId: "i", serverId: "files", name: "read_file" }],
+    ["mcp:v1:invoke-tool", { intentId: "i", serverId: "files", name: "read_file", args: "not an object" }],
+    ["mcp:v1:invoke-tool", { intentId: "i", serverId: "files", name: "read_file", args: [] }],
+    ["mcp:v1:invoke-tool", { intentId: "i", serverId: "__proto__", name: "read_file", args: {} }],
+    ["mcp:v1:invoke-tool", { intentId: "i", serverId: "files", name: "read_file", args: {}, extra: 1 }],
   ])("rejects invalid %s payloads", async (channel, value) => {
     const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
     const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
     const host = {
-      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn() }),
+      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn(), invokeMcpTool: vi.fn(), registerMcpServer: vi.fn(), setMcpToolDecision: vi.fn() }),
       setIntelligenceSettings: vi.fn(), listIntelligenceMessages: vi.fn(), sendIntelligenceMessage: vi.fn(), clearIntelligenceThread: vi.fn(),
+      registerMcpServer: vi.fn(), removeMcpServer: vi.fn(), setMcpToolDecision: vi.fn(), invokeMcpTool: vi.fn(),
     };
     registerMissionControlHostIpc(ipcMain as never, host as never);
     await expect(handlers.get(channel)!(event("file:///theia/index.html") as never, value)).rejects.toThrow("Invalid mission IPC payload");
     expect(host.setIntelligenceSettings).not.toHaveBeenCalled();
     expect(host.sendIntelligenceMessage).not.toHaveBeenCalled();
+    expect(host.registerMcpServer).not.toHaveBeenCalled();
+    expect(host.setMcpToolDecision).not.toHaveBeenCalled();
+    expect(host.invokeMcpTool).not.toHaveBeenCalled();
     expect(host.listIntelligenceMessages).not.toHaveBeenCalled();
     expect(host.clearIntelligenceThread).not.toHaveBeenCalled();
   });

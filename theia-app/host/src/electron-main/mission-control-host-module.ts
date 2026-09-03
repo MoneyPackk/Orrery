@@ -15,6 +15,9 @@ interface HostService extends PublicHostService {
   requestContext(sender: object, senderFrame: object | null): {
     intakeRepository(input: Parameters<PublicHostService["intakeRepository"]>[0]): ReturnType<PublicHostService["intakeRepository"]>;
     reviewAndPromote(input: Parameters<PublicHostService["reviewAndPromote"]>[0]): ReturnType<PublicHostService["reviewAndPromote"]>;
+    registerMcpServer(input: Parameters<PublicHostService["registerMcpServer"]>[0]): ReturnType<PublicHostService["registerMcpServer"]>;
+    setMcpToolDecision(input: Parameters<PublicHostService["setMcpToolDecision"]>[0]): ReturnType<PublicHostService["setMcpToolDecision"]>;
+    invokeMcpTool(input: Parameters<PublicHostService["invokeMcpTool"]>[0]): ReturnType<PublicHostService["invokeMcpTool"]>;
   } | null;
 }
 
@@ -47,6 +50,19 @@ export class MissionControlDaemonClient {
   listIntelligenceMessages(input: Parameters<HostService["listIntelligenceMessages"]>[0]): ReturnType<HostService["listIntelligenceMessages"]> { return this.daemon.listIntelligenceMessages(input); }
   sendIntelligenceMessage(input: Parameters<HostService["sendIntelligenceMessage"]>[0]): ReturnType<HostService["sendIntelligenceMessage"]> { return this.daemon.sendIntelligenceMessage(input); }
   clearIntelligenceThread(input: Parameters<HostService["clearIntelligenceThread"]>[0]): ReturnType<HostService["clearIntelligenceThread"]> { return this.daemon.clearIntelligenceThread(input); }
+
+  listMcpCatalog(): ReturnType<HostService["listMcpCatalog"]> { return this.daemon.listMcpCatalog(); }
+  removeMcpServer(input: Parameters<HostService["removeMcpServer"]>[0]): ReturnType<HostService["removeMcpServer"]> { return this.daemon.removeMcpServer(input); }
+  listMcpActivity(): ReturnType<HostService["listMcpActivity"]> { return this.daemon.listMcpActivity(); }
+  registerMcpServerInWindow(input: Parameters<HostService["registerMcpServer"]>[0], parent: BrowserWindow): ReturnType<HostService["registerMcpServer"]> {
+    return this.daemon.registerMcpServer(input, parent);
+  }
+  setMcpToolDecisionInWindow(input: Parameters<HostService["setMcpToolDecision"]>[0], parent: BrowserWindow): ReturnType<HostService["setMcpToolDecision"]> {
+    return this.daemon.setMcpToolDecision(input, parent);
+  }
+  invokeMcpToolInWindow(input: Parameters<HostService["invokeMcpTool"]>[0], parent: BrowserWindow): ReturnType<HostService["invokeMcpTool"]> {
+    return this.daemon.invokeMcpTool(input, parent);
+  }
 
   getSnapshot(input: Parameters<HostService["getSnapshot"]>[0]): ReturnType<HostService["getSnapshot"]> {
     return this.daemon.getSnapshot(input);
@@ -151,7 +167,13 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
         const parent = this.requireWindows().isTrustedRenderer(contents, frame as WebContents["mainFrame"] | null)
           ? this.requireWindows().parentWindowFor(contents)
           : null;
-        return parent ? { intakeRepository: input => this.daemon.intakeRepository(input, parent), reviewAndPromote: input => this.daemon.reviewAndPromoteInWindow(input, parent) } : null;
+        return parent ? {
+          intakeRepository: input => this.daemon.intakeRepository(input, parent),
+          reviewAndPromote: input => this.daemon.reviewAndPromoteInWindow(input, parent),
+          registerMcpServer: input => this.daemon.registerMcpServerInWindow(input, parent),
+          setMcpToolDecision: input => this.daemon.setMcpToolDecisionInWindow(input, parent),
+          invokeMcpTool: input => this.daemon.invokeMcpToolInWindow(input, parent),
+        } : null;
       },
       intakeRepository: input => this.daemon.intakeRepository(input, this.requireWindows().parentWindow() ?? (() => { throw new Error("Trusted Theia window unavailable."); })()),
       create: input => this.daemon.create(input),
@@ -166,7 +188,21 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
       sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessage(input),
       clearIntelligenceThread: input => this.daemon.clearIntelligenceThread(input),
       reviewAndPromote: input => this.daemon.reviewAndPromote(input),
+      listMcpCatalog: () => this.daemon.listMcpCatalog(),
+      removeMcpServer: input => this.daemon.removeMcpServer(input),
+      listMcpActivity: () => this.daemon.listMcpActivity(),
+      // These three require a trusted parent window for their confirmation dialog, so the
+      // context-free path refuses rather than proceeding without one.
+      registerMcpServer: input => this.daemon.registerMcpServerInWindow(input, this.requireTrustedWindow()),
+      setMcpToolDecision: input => this.daemon.setMcpToolDecisionInWindow(input, this.requireTrustedWindow()),
+      invokeMcpTool: input => this.daemon.invokeMcpToolInWindow(input, this.requireTrustedWindow()),
     };
+  }
+
+  private requireTrustedWindow(): BrowserWindow {
+    const parent = this.requireWindows().parentWindow();
+    if (!parent) throw new Error("Trusted Theia window unavailable.");
+    return parent;
   }
 
   onStart(_application: ElectronMainApplication, electronApp: Pick<typeof app, "on" | "quit" | "exit"> = app): void {

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { MissionControlDaemonClient } from "./mission-control-daemon-client";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MissionControlDaemonClient, MAX_REVIEWABLE_ARGUMENT_LENGTH } from "./mission-control-daemon-client";
+import { McpPolicyStore, MAX_TOOL_CONTENT_LENGTH } from "./mcp-policy";
+import { digestToolArguments } from "./tool-approval";
 
 const endpoint = { host: "127.0.0.1", port: 1234, protocol: "mission-control.v1", tokenPath: "token", pid: 1, instanceId: "daemon" } as const;
 const review = { changes: [{ path: "src/a.ts", additions: 1, deletions: 0, binary: false, diff: "+x" }], evidence: [{ id: "e1", kind: "test", status: "passed", summary: "passed", planRevisionId: "plan-1", timestamp: "2026-08-29T10:00:00.000Z" }] };
@@ -320,5 +325,350 @@ describe("MissionControlDaemonClient Orrery Intelligence", () => {
     }
     await expect(adapter.sendIntelligenceMessage({ intentId: "i-overflow", threadId: "main", text: "question" })).rejects.toThrow(/Too many/);
     expect(provider).toHaveBeenCalledTimes(20);
+  });
+});
+
+describe("MissionControlDaemonClient gated MCP tools", () => {
+  const parent = {} as never;
+  const stdioServer = { intentId: "r1", serverId: "files", label: "Files", transport: "stdio" as const, command: "/usr/bin/mcp-files", args: [] };
+
+  /** Wires the real policy store against a temp directory, with fake transport and consent. */
+  async function harness(options: {
+    readonly tools?: ReadonlyArray<{ name: string; risk: "read" | "write" | "destructive" | "network" | "spend" }>;
+    readonly confirm?: (target: unknown) => Promise<boolean>;
+    readonly call?: (transport: unknown, name: string, args: Record<string, unknown>) => Promise<{ content: string; isError: boolean }>;
+  } = {}) {
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const tools = (options.tools ?? [{ name: "read_file", risk: "read" as const }]).map(tool => ({
+      name: tool.name,
+      title: tool.name,
+      description: `${tool.name} tool`,
+      risk: tool.risk,
+      inputSchema: { type: "object" },
+    }));
+    const confirmToolCall = vi.fn(options.confirm ?? (async () => true));
+    const callMcpTool = vi.fn(options.call ?? (async () => ({ content: "tool output", isError: false })));
+    const confirmServerRegistration = vi.fn(async (_target: Record<string, unknown>) => true);
+    const confirmDecision = vi.fn(async (_target: Record<string, unknown>) => true);
+    const closed = vi.fn(async () => undefined);
+    const adapter = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      createMcpTransport: () => ({ request: vi.fn(async () => ({})), close: closed }),
+      discoverMcpTools: async () => tools,
+      callMcpTool: callMcpTool as never,
+      confirmToolCall: confirmToolCall as never,
+      confirmServerRegistration: confirmServerRegistration as never,
+      confirmDecision: confirmDecision as never,
+    });
+    return { adapter, confirmToolCall, callMcpTool, confirmServerRegistration, confirmDecision, closed, directory };
+  }
+
+  it("registers a server, discovers its tools, and never leaks the command to the catalog", async () => {
+    const { adapter } = await harness();
+    const catalog = await adapter.registerMcpServer(stdioServer, parent);
+    expect(catalog.servers[0].origin).toBe("mcp-files");
+    expect(catalog.tools.map(tool => tool.name)).toEqual(["read_file"]);
+    expect(JSON.stringify(catalog)).not.toContain("/usr/bin");
+  });
+
+  it("keeps a server registered with no tools when discovery fails, so it stays removable", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const adapter = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      createMcpTransport: () => ({ request: vi.fn(), close: vi.fn(async () => undefined) }),
+      discoverMcpTools: async () => { throw new Error("handshake failed"); },
+      confirmServerRegistration: (async () => true) as never,
+    });
+    const catalog = await adapter.registerMcpServer(stdioServer, parent);
+    expect(catalog.servers).toHaveLength(1);
+    expect(catalog.tools).toHaveLength(0);
+  });
+
+  it("asks the human before running a tool and binds consent to the exact arguments", async () => {
+    const { adapter, confirmToolCall, callMcpTool } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    const result = await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: { path: "a.txt" } }, parent);
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+    const target = confirmToolCall.mock.calls[0][0] as { argumentsDigest: string; args: Record<string, unknown>; risk: string };
+    expect(target.args).toEqual({ path: "a.txt" });
+    expect(target.argumentsDigest).toBe(digestToolArguments({ path: "a.txt" }));
+    expect(callMcpTool).toHaveBeenCalledWith(expect.anything(), "read_file", { path: "a.txt" });
+    expect(result.content).toBe("tool output");
+  });
+
+  it("does not run the tool when the human cancels, and audits the refusal", async () => {
+    const { adapter, callMcpTool } = await harness({ confirm: async () => false });
+    await adapter.registerMcpServer(stdioServer, parent);
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent)).rejects.toThrow(/cancelled/i);
+    expect(callMcpTool).not.toHaveBeenCalled();
+    const activity = await adapter.listMcpActivity();
+    expect(activity.entries.at(-1)).toMatchObject({ outcome: "denied", name: "read_file" });
+  });
+
+  it("always asks again for a write, even after a remembered allow is forced onto disk", async () => {
+    const { adapter, confirmToolCall, directory } = await harness({ tools: [{ name: "write_file", risk: "write" }] });
+    await adapter.registerMcpServer(stdioServer, parent);
+    // A persisted allow must not create a silent-write path.
+    const path = join(directory, "mcp-servers.json");
+    const raw = JSON.parse(await readFile(path, "utf8")) as { servers: Array<{ decisions: Record<string, string> }> };
+    raw.servers[0].decisions.write_file = "allow";
+    await writeFile(path, JSON.stringify(raw), "utf8");
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "write_file", args: {} }, parent);
+    await adapter.invokeMcpTool({ intentId: "i2", serverId: "files", name: "write_file", args: {} }, parent);
+    expect(confirmToolCall).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips the prompt only for a remembered read", async () => {
+    const { adapter, confirmToolCall } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "read_file", decision: "allow" }, parent);
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    await adapter.invokeMcpTool({ intentId: "i2", serverId: "files", name: "read_file", args: {} }, parent);
+    expect(confirmToolCall).not.toHaveBeenCalled();
+  });
+
+  it("refuses a denied tool without prompting or running it", async () => {
+    const { adapter, confirmToolCall, callMcpTool } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "read_file", decision: "deny" }, parent);
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent)).rejects.toThrow(/denied by policy/);
+    expect(confirmToolCall).not.toHaveBeenCalled();
+    expect(callMcpTool).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown server or tool", async () => {
+    const { adapter } = await harness();
+    await expect(adapter.invokeMcpTool({ intentId: "i", serverId: "nope", name: "read_file", args: {} }, parent)).rejects.toThrow(/Unknown server/);
+    await adapter.registerMcpServer(stdioServer, parent);
+    await expect(adapter.invokeMcpTool({ intentId: "i", serverId: "files", name: "nope", args: {} }, parent)).rejects.toThrow(/Unknown tool/);
+  });
+
+  it("rejects prototype-bearing and unrepresentable arguments before consent", async () => {
+    const { adapter, confirmToolCall } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    const poisoned = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: poisoned }, parent)).rejects.toThrow(/unsupported key/);
+    await expect(adapter.invokeMcpTool({ intentId: "i2", serverId: "files", name: "read_file", args: { n: Number.NaN } }, parent)).rejects.toThrow(/unsupported value/);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(confirmToolCall).not.toHaveBeenCalled();
+  });
+
+  it("truncates oversized tool output and reports it", async () => {
+    const { adapter } = await harness({ call: async () => ({ content: "x".repeat(MAX_TOOL_CONTENT_LENGTH + 100), isError: false }) });
+    await adapter.registerMcpServer(stdioServer, parent);
+    const result = await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    expect(result.content).toHaveLength(MAX_TOOL_CONTENT_LENGTH);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("audits a failed invocation and still closes the transport", async () => {
+    const { adapter, closed } = await harness({ call: async () => { throw new Error("server exploded"); } });
+    await adapter.registerMcpServer(stdioServer, parent);
+    // The renderer gets a fixed message; the detail stays in the main process.
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent)).rejects.toThrow(/could not be run/);
+    const activity = await adapter.listMcpActivity();
+    expect(activity.entries.at(-1)).toMatchObject({ outcome: "failed" });
+    expect(JSON.stringify(activity)).not.toContain("server exploded");
+    expect(closed).toHaveBeenCalled();
+  });
+
+  it("requires native confirmation before registering a server, and spawns nothing if refused", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const createMcpTransport = vi.fn(() => ({ request: vi.fn(async () => ({})), close: vi.fn(async () => undefined) }));
+    const adapter = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      createMcpTransport: createMcpTransport as never,
+      discoverMcpTools: async () => [],
+      confirmServerRegistration: (async () => false) as never,
+    });
+    await expect(adapter.registerMcpServer(stdioServer, parent)).rejects.toThrow(/registration cancelled/i);
+    expect(createMcpTransport).not.toHaveBeenCalled();
+    expect((await adapter.listMcpCatalog()).servers).toHaveLength(0);
+  });
+
+  it("shows the human the full command line before registering", async () => {
+    const { adapter, confirmServerRegistration } = await harness();
+    await adapter.registerMcpServer({ ...stdioServer, args: ["--root", "/tmp"] }, parent);
+    const target = confirmServerRegistration.mock.calls[0][0] as { command: string; args: ReadonlyArray<string>; replacesExisting: boolean };
+    expect(target.command).toBe("/usr/bin/mcp-files");
+    expect(target.args).toEqual(["--root", "/tmp"]);
+    expect(target.replacesExisting).toBe(false);
+    // Re-registering must warn that existing tools and permissions are discarded.
+    await adapter.registerMcpServer(stdioServer, parent);
+    expect((confirmServerRegistration.mock.calls[1][0] as { replacesExisting: boolean }).replacesExisting).toBe(true);
+  });
+
+  it("refuses to register a shell, script interpreter, script file, or remote binary", async () => {
+    const { adapter, confirmServerRegistration } = await harness();
+    const rejected = [
+      "C:\\Windows\\System32\\cmd.exe",
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "/bin/bash",
+      "C:\\tools\\payload.bat",
+      "C:\\tools\\payload.ps1",
+      "\\\\attacker\\share\\payload.exe",
+    ];
+    for (const command of rejected) {
+      await expect(adapter.registerMcpServer({ ...stdioServer, command }, parent)).rejects.toThrow(/cannot be registered|local path/);
+    }
+    // Refused before the human is ever prompted.
+    expect(confirmServerRegistration).not.toHaveBeenCalled();
+  });
+
+  it("requires native confirmation before granting a standing allow", async () => {
+    const { adapter, confirmToolCall, confirmDecision } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    const refusing = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => (await harness()).directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      confirmDecision: (async () => false) as never,
+    });
+    await expect(refusing.setMcpToolDecision({ intentId: "d", serverId: "files", name: "read_file", decision: "allow" }, parent)).rejects.toThrow(/Unknown server|cancelled/);
+    // The granted path is confirmed, and only then does the prompt stop appearing.
+    await adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "read_file", decision: "allow" }, parent);
+    expect(confirmDecision).toHaveBeenCalledTimes(1);
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    expect(confirmToolCall).not.toHaveBeenCalled();
+  });
+
+  it("does not prompt when tightening policy to ask or deny", async () => {
+    const { adapter, confirmDecision } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "read_file", decision: "deny" }, parent);
+    await adapter.setMcpToolDecision({ intentId: "d2", serverId: "files", name: "read_file", decision: "ask" }, parent);
+    expect(confirmDecision).not.toHaveBeenCalled();
+  });
+
+  it("re-derives risk at invocation, so a tampered risk and decision cannot open a silent path", async () => {
+    const { adapter, confirmToolCall, directory } = await harness({ tools: [{ name: "delete_everything", risk: "destructive" }] });
+    await adapter.registerMcpServer(stdioServer, parent);
+    // Forge both fields: claim the destructive tool is a read, and grant a standing allow.
+    const path = join(directory, "mcp-servers.json");
+    const raw = JSON.parse(await readFile(path, "utf8")) as { servers: Array<{ tools: Array<{ risk: string }>; decisions: Record<string, string> }> };
+    raw.servers[0].tools[0].risk = "read";
+    raw.servers[0].decisions.delete_everything = "allow";
+    await writeFile(path, JSON.stringify(raw), "utf8");
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "delete_everything", args: {} }, parent);
+    // Risk is recomputed from the declaration, so consent is still demanded.
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+    expect((confirmToolCall.mock.calls[0][0] as { risk: string }).risk).toBe("destructive");
+    expect((await adapter.listMcpCatalog()).tools[0].risk).toBe("destructive");
+  });
+
+  it("refuses arguments too large for the human to review", async () => {
+    const { adapter, confirmToolCall, callMcpTool } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: { blob: "x".repeat(MAX_REVIEWABLE_ARGUMENT_LENGTH + 1) } }, parent)).rejects.toThrow(/too large to review/);
+    expect(confirmToolCall).not.toHaveBeenCalled();
+    expect(callMcpTool).not.toHaveBeenCalled();
+    expect((await adapter.listMcpActivity()).entries.at(-1)).toMatchObject({ outcome: "denied" });
+  });
+
+  it("audits the dispatch before running the tool, so a crash cannot erase it", async () => {
+    const { adapter } = await harness({ call: async () => { throw new Error("crash"); } });
+    await adapter.registerMcpServer(stdioServer, parent);
+    await expect(adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent)).rejects.toThrow();
+    const entries = (await adapter.listMcpActivity()).entries;
+    // An "allowed" intent precedes the failure record.
+    expect(entries.map(entry => entry.outcome)).toEqual(["allowed", "failed"]);
+  });
+
+  it("does not leak the server command to the renderer when a tool fails", async () => {
+    const { adapter } = await harness({ call: async () => { throw new Error("spawn /usr/bin/mcp-files ENOENT"); } });
+    await adapter.registerMcpServer(stdioServer, parent);
+    const failure = await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent).catch((error: Error) => error);
+    expect((failure as Error).message).toBe("The tool could not be run.");
+    expect(JSON.stringify(await adapter.listMcpActivity())).not.toContain("/usr/bin");
+  });
+
+  it("does not roll back audit sequence numbers when the log is truncated", async () => {
+    const { adapter, directory } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    const before = (await adapter.listMcpActivity()).entries.at(-1)!.sequence;
+    // Erase the visible history; the high-water mark must still advance so the gap shows.
+    await writeFile(join(directory, "mcp-activity.json"), JSON.stringify({ version: 1, highWater: before, entries: [] }), "utf8");
+    await adapter.invokeMcpTool({ intentId: "i2", serverId: "files", name: "read_file", args: {} }, parent);
+    expect((await adapter.listMcpActivity()).entries.at(-1)!.sequence).toBeGreaterThan(before);
+  });
+
+  it("redacts and audits a synchronous transport failure, not just an async one", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const adapter = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      // First call (discovery during registration) succeeds; the invocation throws synchronously.
+      createMcpTransport: ((): never => { throw new Error("spawn C:\\secret\\path\\tool.exe ENOENT"); }) as never,
+      discoverMcpTools: async () => [{ name: "read_file", title: "read_file", description: "d", risk: "read" as const, inputSchema: {} }],
+      confirmToolCall: (async () => true) as never,
+      confirmServerRegistration: (async () => true) as never,
+    });
+    // Registration tolerates a failed handshake, leaving the server visible with no tools.
+    await adapter.registerMcpServer(stdioServer, parent);
+    const store = new McpPolicyStore(directory, "linux", async () => undefined);
+    await store.replaceTools("files", [{ name: "read_file", title: "read_file", description: "d", risk: "read", inputSchema: {} }]);
+    const failure = await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent).catch((error: Error) => error);
+    expect((failure as Error).message).toBe("The tool could not be run.");
+    const activity = await adapter.listMcpActivity();
+    expect(JSON.stringify(activity)).not.toContain("C:\\secret");
+    // The intent and its terminal failure are both recorded.
+    expect(activity.entries.map(entry => entry.outcome)).toContain("failed");
+  });
+
+  it("does not spend the registration budget on payloads that never reach the human", async () => {
+    const { adapter, confirmServerRegistration } = await harness();
+    for (let index = 0; index < 25; index += 1) {
+      await expect(adapter.registerMcpServer({ ...stdioServer, serverId: `s-${index}`, command: "relative/path" }, parent)).rejects.toThrow(/absolute path/);
+    }
+    expect(confirmServerRegistration).not.toHaveBeenCalled();
+    // A valid registration still succeeds afterwards.
+    await expect(adapter.registerMcpServer(stdioServer, parent)).resolves.toBeDefined();
+  });
+
+  it("bounds tool invocation independently of chat", async () => {
+    const { adapter, callMcpTool } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.setMcpToolDecision({ intentId: "d1", serverId: "files", name: "read_file", decision: "allow" }, parent);
+    for (let index = 0; index < 30; index += 1) {
+      await adapter.invokeMcpTool({ intentId: `i-${index}`, serverId: "files", name: "read_file", args: {} }, parent);
+    }
+    await expect(adapter.invokeMcpTool({ intentId: "overflow", serverId: "files", name: "read_file", args: {} }, parent)).rejects.toThrow(/Too many tool calls/);
+    expect(callMcpTool).toHaveBeenCalledTimes(30);
+  });
+
+  it("does not require a daemon connection for tool work", async () => {
+    const client = sharedClient();
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const adapter = adapterFor(client, async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => new McpPolicyStore(runtime, "linux", async () => undefined),
+      createMcpTransport: () => ({ request: vi.fn(async () => ({})), close: vi.fn(async () => undefined) }),
+      discoverMcpTools: async () => [{ name: "read_file", title: "read_file", description: "d", risk: "read" as const, inputSchema: {} }],
+      callMcpTool: (async () => ({ content: "ok", isError: false })) as never,
+      confirmToolCall: (async () => true) as never,
+      confirmServerRegistration: (async () => true) as never,
+      confirmDecision: (async () => true) as never,
+    });
+    await adapter.registerMcpServer(stdioServer, parent);
+    await adapter.invokeMcpTool({ intentId: "i1", serverId: "files", name: "read_file", args: {} }, parent);
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("shares one policy store across concurrent cold starts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
+    const created: unknown[] = [];
+    const adapter = adapterFor(sharedClient(), async () => true, true, {
+      createRuntimeDirectory: async () => directory,
+      createMcpPolicyStore: (runtime: string) => {
+        const instance = new McpPolicyStore(runtime, "linux", async () => undefined);
+        created.push(instance);
+        return instance;
+      },
+    });
+    await Promise.all([adapter.listMcpCatalog(), adapter.listMcpActivity(), adapter.listMcpCatalog()]);
+    expect(created).toHaveLength(1);
   });
 });
