@@ -7,12 +7,23 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { classifyNativePreparationFailure } from "./smoke-policy.mjs";
+import { describeStaleInstall, findStaleInstalledFiles, resolveExtensionPaths } from "./smoke-freshness.mjs";
 import { waitForTheiaExit, waitForTheiaReadiness } from "./smoke-runtime.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error("npm_execpath is required for the Theia smoke.");
 const npmArgs = args => [npmCli, ...args];
+
+// `build:full` bundles the installed copy of the extension, not its source. Refuse to run
+// against a stale copy: a passing smoke would otherwise say nothing about the current code.
+const extensionPaths = resolveExtensionPaths(root);
+const stale = findStaleInstalledFiles(extensionPaths.built, extensionPaths.installed);
+if (stale.length > 0) {
+  process.stderr.write(`${describeStaleInstall(stale)}\n`);
+  process.exit(1);
+}
+
 const full = spawnSync(process.execPath, npmArgs(["run", "build:full"]), { cwd: root, encoding: "utf8" });
 if (full.status === 0) {
   const smokeRoot = resolve(tmpdir(), "orrery-theia-smoke-");
