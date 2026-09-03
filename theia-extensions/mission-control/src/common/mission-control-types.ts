@@ -1,7 +1,30 @@
-import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput, IntelligenceMessage, IntelligenceSettingsInput, IntelligenceSettingsStatus } from "./mission-control-contracts";
+import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput, IntelligenceMessage, IntelligenceSettingsInput, IntelligenceSettingsStatus, McpActivityEntry, McpCatalog, McpInvokeResult, McpRegisterInput, McpServerStatus, McpToolDecision, McpToolStatus } from "./mission-control-contracts";
 
 export const MissionControlService = Symbol("MissionControlService");
 export const OrreryIntelligenceService = Symbol("OrreryIntelligenceService");
+export const OrreryToolsService = Symbol("OrreryToolsService");
+
+export interface OrreryToolsState {
+  readonly servers: ReadonlyArray<McpServerStatus>;
+  readonly tools: ReadonlyArray<McpToolStatus>;
+  readonly activity: ReadonlyArray<McpActivityEntry>;
+  /** The most recent invocation result. Untrusted server output: render as plain text. */
+  readonly lastResult?: McpInvokeResult;
+  readonly loading?: boolean;
+  readonly pending?: boolean;
+  readonly error?: string;
+  readonly notice?: string;
+  /** The effect landed but the catalog could not be re-read, so this view may be out of date. */
+  readonly stale?: boolean;
+}
+
+export interface OrreryToolsService {
+  load(): Promise<OrreryToolsState>;
+  register(input: Omit<McpRegisterInput, "intentId">): Promise<OrreryToolsState>;
+  remove(serverId: string): Promise<OrreryToolsState>;
+  decide(serverId: string, name: string, decision: McpToolDecision): Promise<OrreryToolsState>;
+  invoke(serverId: string, name: string, args: Readonly<Record<string, unknown>>): Promise<OrreryToolsState>;
+}
 
 export interface OrreryIntelligenceState {
   readonly threadId: string;

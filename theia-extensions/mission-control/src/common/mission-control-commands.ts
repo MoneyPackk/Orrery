@@ -9,3 +9,7 @@ export const MissionControlCommands = {
 export const OrreryIntelligenceCommands = {
   OPEN: { id: "orrery.intelligence.open", label: "Orrery Intelligence" },
 } as const satisfies Record<string, Command>;
+
+export const OrreryToolsCommands = {
+  OPEN: { id: "orrery.tools.open", label: "Orrery Tools" },
+} as const satisfies Record<string, Command>;

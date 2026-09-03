@@ -187,8 +187,26 @@ export class MissionControlDaemonClient implements MissionIpcService {
     return this.refreshMcpTools(definition.serverId);
   }
 
+  /**
+   * Removes a server and everything remembered about it. Only ever tightens policy, so it
+   * needs no confirmation, but it discards granted consent and so must leave an audit trace.
+   */
   async removeMcpServer(input: McpRemoveServerInput): Promise<McpCatalog> {
-    return (await this.mcp()).removeServer(input.serverId);
+    const store = await this.mcp();
+    const server = await store.findServer(input.serverId);
+    const catalog = await store.removeServer(input.serverId);
+    if (server) {
+      // Appended after the removal resolves: the policy store serializes writes through a
+      // single chain, so appending from inside `removeServer` would deadlock.
+      await store.appendActivity({
+        serverId: server.serverId,
+        name: "(server)",
+        risk: "read",
+        outcome: "denied",
+        reason: `Server removed, discarding ${server.tools.length} tools and their permissions.`,
+      }).catch(() => undefined);
+    }
+    return catalog;
   }
 
   /**

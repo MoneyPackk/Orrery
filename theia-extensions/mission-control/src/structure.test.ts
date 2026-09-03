@@ -24,7 +24,8 @@ describe("mission control Theia extension structure", () => {
 
   it("keeps browser code outside privileged daemon, kernel, filesystem, process, and Git packages", () => {
     const sources = ["mission-control-desktop-adapter.ts", "mission-control-view.tsx", "mission-control-widget.tsx", "mission-control-widget-factory.ts", "mission-control-contribution.ts", "mission-control-frontend-module.ts",
-      "orrery-intelligence-adapter.ts", "orrery-intelligence-view.tsx", "orrery-intelligence-widget.tsx", "orrery-intelligence-contribution.ts", "orrery-intelligence-style.ts"]
+      "orrery-intelligence-adapter.ts", "orrery-intelligence-view.tsx", "orrery-intelligence-widget.tsx", "orrery-intelligence-contribution.ts", "orrery-intelligence-style.ts",
+      "orrery-tools-adapter.ts", "orrery-tools-view.tsx", "orrery-tools-widget.tsx", "orrery-tools-contribution.ts", "orrery-tools-style.ts"]
       .map((file) => read(`src/browser/${file}`)).join("\n");
     expect(sources).not.toMatch(/mission-control-daemon|mission-kernel|node:fs|node:process|child_process|isomorphic-git|simple-git|from ["'](?:fs|process)["']/);
     expect(sources).not.toMatch(/electron/);
@@ -100,5 +101,25 @@ describe("mission control Theia extension structure", () => {
     expect(contribution).toContain("context.registerMcpServer(parseMcpRegister(values[0]))");
     expect(contribution).toContain("context.setMcpToolDecision(parseMcpSetDecision(values[0]))");
     expect(contribution).not.toMatch(/guarded\(parseMcpInvoke|guarded\(parseMcpRegister|guarded\(parseMcpSetDecision/);
+  });
+
+  it("renders the tool surface without trusting server output or reaching a transport", () => {
+    const sources = ["orrery-tools-adapter.ts", "orrery-tools-view.tsx", "orrery-tools-widget.tsx"].map(file => read(`src/browser/${file}`)).join("\n");
+    // Untrusted tool output must never become markup, and the renderer must never speak to a server itself.
+    expect(sources).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
+    expect(sources).not.toMatch(/\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|"jsonrpc"/);
+    expect(sources).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
+    // Every effectful path goes through the narrow preload capability, which raises a native modal in main.
+    expect(read("src/browser/orrery-tools-adapter.ts")).toContain("window.orreryMissionControl");
+    // Server output is rendered inside a <pre> as text, so escaping is not load-bearing on a formatter.
+    expect(read("src/browser/orrery-tools-view.tsx")).toMatch(/<pre className="orrery-tools__output">\{state\.lastResult\.content\}<\/pre>/);
+  });
+
+  it("mounts Orrery Tools in the right shell with its own command", () => {
+    expect(read("src/common/mission-control-commands.ts")).toContain("orrery.tools.open");
+    expect(read("src/browser/orrery-tools-contribution.ts")).toMatch(/area:\s*["']right["']/);
+    expect(read("src/browser/orrery-tools-widget.tsx")).toContain("extends ReactWidget");
+    expect(read("src/browser/orrery-tools-view.tsx")).toContain("@theia/core/shared/react");
+    expect(read("src/browser/orrery-tools-view.tsx")).not.toMatch(/from ["']react["']/);
   });
 });

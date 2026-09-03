@@ -372,6 +372,23 @@ describe("MissionControlDaemonClient gated MCP tools", () => {
     expect(JSON.stringify(catalog)).not.toContain("/usr/bin");
   });
 
+  it("audits a server removal, because it silently discards granted permissions", async () => {
+    const { adapter } = await harness();
+    await adapter.registerMcpServer(stdioServer, parent);
+    const catalog = await adapter.removeMcpServer({ intentId: "x1", serverId: "files" });
+    expect(catalog.servers).toEqual([]);
+    const activity = await adapter.listMcpActivity();
+    const removal = activity.entries.at(-1)!;
+    expect(removal.serverId).toBe("files");
+    expect(removal.reason).toMatch(/Server removed/);
+  });
+
+  it("does not audit the removal of a server that was never registered", async () => {
+    const { adapter } = await harness();
+    await adapter.removeMcpServer({ intentId: "x2", serverId: "absent" });
+    expect((await adapter.listMcpActivity()).entries).toEqual([]);
+  });
+
   it("keeps a server registered with no tools when discovery fails, so it stays removable", async () => {
     const directory = await mkdtemp(join(tmpdir(), "orrery-mcp-adapter-"));
     const adapter = adapterFor(sharedClient(), async () => true, true, {
