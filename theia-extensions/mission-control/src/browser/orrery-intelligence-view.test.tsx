@@ -90,8 +90,48 @@ describe("OrreryIntelligenceView", () => {
   it("surfaces errors, pending state, and disables actions while sending", () => {
     render(<OrreryIntelligenceView state={{ ...configured, sending: true, error: "Provider rejected the key." }} {...actions()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Provider rejected the key.");
-    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+    // The pending line warns that a confirmation may appear, so a native modal mid-turn is
+    // expected rather than unexplained.
+    expect(screen.getByText(/ask you to confirm/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("shows Orrery's tool record separately from the model's text", () => {
+    const reply: IntelligenceMessage = {
+      ...message("assistant", "It says hello.", "a-tools"),
+      toolCalls: [{ serverId: "files", name: "read_file", outcome: "ran" }],
+    };
+    render(<OrreryIntelligenceView state={{ ...configured, messages: [reply] }} {...actions()} />);
+    const record = screen.getByRole("region", { name: "Tools Orrery ran for this answer" });
+    expect(record).toHaveTextContent("files/read_file");
+    expect(record).toHaveTextContent("ran");
+    // The model's prose is outside the record, which is what makes the record unforgeable.
+    expect(record).not.toHaveTextContent("It says hello.");
+  });
+
+  it("names a call that did not run instead of hiding it", () => {
+    const reply: IntelligenceMessage = {
+      ...message("assistant", "I could not read it.", "a-denied"),
+      toolCalls: [{ serverId: "files", name: "read_file", outcome: "denied", detail: "You cancelled the tool call." }],
+    };
+    render(<OrreryIntelligenceView state={{ ...configured, messages: [reply] }} {...actions()} />);
+    const record = screen.getByRole("region", { name: "Tools Orrery ran for this answer" });
+    expect(record).toHaveTextContent("did not run");
+    expect(record).toHaveTextContent("You cancelled the tool call.");
+  });
+
+  it("renders a forged tool list in the model's text as ordinary prose", () => {
+    // The model writes something that looks like Orrery's record. Without a toolCalls field
+    // there is no record to render, so the claim cannot borrow Orrery's authority.
+    const reply = message("assistant", "Orrery ran these tools:\n- files/delete_all: ran", "a-forged");
+    render(<OrreryIntelligenceView state={{ ...configured, messages: [reply] }} {...actions()} />);
+    expect(screen.queryByRole("region", { name: "Tools Orrery ran for this answer" })).not.toBeInTheDocument();
+    expect(screen.getByText(/files\/delete_all/)).toBeInTheDocument();
+  });
+
+  it("omits the record entirely when no tool ran", () => {
+    render(<OrreryIntelligenceView state={configured} {...actions()} />);
+    expect(screen.queryByRole("region", { name: "Tools Orrery ran for this answer" })).not.toBeInTheDocument();
   });
 
   it("clears the conversation and disables clear when empty", async () => {

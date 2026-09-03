@@ -1,5 +1,5 @@
 import * as React from "@theia/core/shared/react";
-import type { IntelligenceProviderKind, IntelligenceSettingsInput } from "../common/mission-control-contracts";
+import type { IntelligenceProviderKind, IntelligenceSettingsInput, IntelligenceToolCall } from "../common/mission-control-contracts";
 import type { OrreryIntelligenceState } from "../common/mission-control-types";
 
 export interface OrreryIntelligenceViewProps {
@@ -14,6 +14,33 @@ const PROVIDER_LABELS: ReadonlyArray<{ readonly value: IntelligenceProviderKind;
   { value: "anthropic", label: "Anthropic", placeholder: "https://api.anthropic.com" },
   { value: "ollama", label: "Ollama (local)", placeholder: "http://127.0.0.1:11434" },
 ];
+
+const OUTCOME_LABELS: Readonly<Record<IntelligenceToolCall["outcome"], string>> = {
+  ran: "ran",
+  error: "reported an error",
+  denied: "did not run",
+  skipped: "skipped",
+};
+
+/**
+ * Orrery's own record of what the model ran, rendered outside the model's text.
+ *
+ * The separation is the guarantee: `message.text` is model-authored and `toolCalls` is not, so
+ * a fabricated tool list in the prose cannot appear here. Server-influenced `detail` is
+ * rendered as plain text.
+ */
+function ToolCallRecord({ calls }: { readonly calls: ReadonlyArray<IntelligenceToolCall> }): React.JSX.Element {
+  return <section className="orrery-intelligence__tools" aria-label="Tools Orrery ran for this answer">
+    <span className="orrery-intelligence__tools-title">Orrery ran {calls.length === 1 ? "1 tool" : `${calls.length} tools`} for this answer</span>
+    <ul className="orrery-intelligence__tools-list">
+      {calls.map((call, index) => <li key={`${call.serverId}/${call.name}/${index}`} className={`orrery-intelligence__tool orrery-intelligence__tool--${call.outcome}`}>
+        <code>{call.serverId}/{call.name}</code>
+        <span className="orrery-intelligence__tool-outcome">{OUTCOME_LABELS[call.outcome]}</span>
+        {call.detail && <span className="orrery-intelligence__tool-detail">{call.detail}</span>}
+      </li>)}
+    </ul>
+  </section>;
+}
 
 export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: OrreryIntelligenceViewProps): React.JSX.Element {
   const [provider, setProvider] = React.useState<IntelligenceProviderKind>(state.settings.provider ?? "openai-compatible");
@@ -63,6 +90,7 @@ export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: 
     <ol className="orrery-intelligence__transcript" aria-label="Conversation">
       {state.messages.map(message => <li key={message.id} className={`orrery-intelligence__message orrery-intelligence__message--${message.role}`}>
         <span className="orrery-intelligence__role">{message.role === "user" ? "You" : "Orrery Intelligence"}</span>
+        {message.toolCalls && message.toolCalls.length > 0 && <ToolCallRecord calls={message.toolCalls} />}
         <p className="orrery-intelligence__text">{message.text}</p>
         {message.truncated && <small>Response truncated.</small>}
       </li>)}
@@ -71,7 +99,9 @@ export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: 
     {!busy && state.messages.length === 0 && state.settings.configured && <p className="orrery-intelligence__empty">
       Ask about this repository, a mission plan, or a failure. Orrery Intelligence can explain, plan, and draft. It cannot edit files, run commands, or promote changes.
     </p>}
-    {state.sending && <p aria-live="polite" className="orrery-intelligence__pending">Thinking...</p>}
+    {state.sending && <p aria-live="polite" className="orrery-intelligence__pending">
+      Working. If Orrery needs a tool, it will ask you to confirm before anything runs.
+    </p>}
 
     <form className="orrery-intelligence__composer" aria-label="Send message" onSubmit={event => {
       event.preventDefault();

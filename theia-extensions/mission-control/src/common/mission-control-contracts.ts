@@ -132,6 +132,20 @@ export interface IntelligenceSettingsInput {
   readonly apiKey: string;
 }
 
+/**
+ * One tool the model requested during a turn.
+ *
+ * Orrery authors these; the model authors `IntelligenceMessage.text`. Keeping them in separate
+ * fields is what lets the interface render a tool record the model cannot forge. `detail` may
+ * carry server-reported error text, so render it as plain text.
+ */
+export interface IntelligenceToolCall {
+  readonly serverId: string;
+  readonly name: string;
+  readonly outcome: "ran" | "error" | "denied" | "skipped";
+  readonly detail?: string;
+}
+
 export interface IntelligenceMessage {
   readonly id: string;
   readonly threadId: string;
@@ -141,6 +155,8 @@ export interface IntelligenceMessage {
   readonly createdAt: string;
   readonly missionId?: string;
   readonly truncated?: boolean;
+  /** Present only on an assistant message whose turn used tools. */
+  readonly toolCalls?: ReadonlyArray<IntelligenceToolCall>;
 }
 
 export interface IntelligenceThreadInput { readonly threadId: string }

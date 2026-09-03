@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { IntelligenceStore, MAX_MESSAGE_LENGTH, type IntelligenceCredentials } from "./intelligence-store";
 import { requestIntelligenceReply, requestIntelligenceRaw, ORRERY_SYSTEM_PROMPT, type FetchLike } from "./intelligence-provider";
 import { createToolFrame, declareTools, extractToolCalls, frameToolResult, ToolCallBudget, ToolCatalog, toolSystemPrompt } from "./intelligence-tools";
-import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceTranscript } from "./intelligence-contract";
+import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceToolCall, IntelligenceTranscript } from "./intelligence-contract";
 import { basename } from "node:path";
 import { McpPolicyStore, MAX_TOOL_CONTENT_LENGTH, requiresConsentEveryTime, effectiveRisk, assertServerInput, type McpToolRecord } from "./mcp-policy";
 import { callTool, createTransport, discoverTools, type McpFetchLike, type McpTransport } from "./mcp-client";
@@ -148,15 +148,17 @@ export class MissionControlDaemonClient implements MissionIpcService {
     const credentials = await store.readCredentials();
     if (!credentials) throw new Error("Orrery Intelligence is not configured. Add your provider key and model first.");
     const history = await store.readThread(input.threadId);
-    const turns = history.map(message => ({ role: message.role, text: message.text }));
+    // Tool use is restated for the model, because it is no longer carried in the message text.
+    const turns = history.map(message => ({ role: message.role, text: historyTextFor(message) }));
 
-    const { reply, transcript } = await this.runIntelligenceTurn(credentials, turns, input.text, parent);
+    const { reply, toolCalls } = await this.runIntelligenceTurn(credentials, turns, input.text, parent);
     const appended = await store.appendExchange({
       threadId: input.threadId,
       intentId: input.intentId,
       missionId: input.missionId,
       request: input.text,
-      reply: renderTurnReply(reply, transcript),
+      reply,
+      toolCalls,
     });
     return { request: appended.request, reply: appended.reply };
   }
@@ -164,15 +166,17 @@ export class MissionControlDaemonClient implements MissionIpcService {
   /**
    * Runs one turn, resolving tool calls until the model answers or the budget is spent.
    *
-   * Returns the final text plus a human-readable record of what ran, so the transcript shows
-   * which tools were used rather than presenting tool-derived claims as unsourced assertions.
+   * Returns the model's text unmodified plus a structured record of what ran. The record is
+   * kept out of the text deliberately: the model authors the text, Orrery authors the record,
+   * and the interface renders them in separate regions. A fabricated tool list is therefore
+   * impossible to present as Orrery's own rather than merely detectable after the fact.
    */
   private async runIntelligenceTurn(
     credentials: IntelligenceCredentials,
     history: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
     prompt: string,
     parent?: BrowserWindow,
-  ): Promise<{ reply: string; transcript: ReadonlyArray<string> }> {
+  ): Promise<{ reply: string; toolCalls: ReadonlyArray<IntelligenceToolCall> }> {
     const request = this.dependencies.requestIntelligenceRaw ?? requestIntelligenceRaw;
     const catalog = parent ? await this.declarableTools() : undefined;
     if (!catalog || catalog.size === 0) {
@@ -182,7 +186,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
         { credentials, history, prompt },
         this.dependencies.fetchImpl,
       );
-      return { reply, transcript: [] };
+      return { reply, toolCalls: [] };
     }
 
     const budget = new ToolCallBudget();
@@ -191,7 +195,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
     const systemPrompt = `${ORRERY_SYSTEM_PROMPT} ${toolSystemPrompt(budget.remaining, frame)}`;
     const conversation = [...history];
     let turnPrompt = prompt;
-    const transcript: string[] = [];
+    const toolCalls: IntelligenceToolCall[] = [];
 
     for (;;) {
       const response = await request(
@@ -201,7 +205,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
       const calls = extractToolCalls(credentials.provider, response.body, catalog);
       if (calls.length === 0) {
         if (!response.text.trim()) throw new Error("Orrery Intelligence returned an empty response.");
-        return { reply: response.text, transcript };
+        return { reply: response.text, toolCalls };
       }
 
       const results: string[] = [];
@@ -210,12 +214,12 @@ export class MissionControlDaemonClient implements MissionIpcService {
         const declared = qualifiedFor(catalog, call);
         if (!budget.consume()) {
           results.push(frameToolResult(declared, "Tool call budget for this message is exhausted. Answer with what you have.", true, frame));
-          transcript.push(summaryLine(call.serverId, call.name, "skipped, budget exhausted"));
+          toolCalls.push({ serverId: call.serverId, name: call.name, outcome: "skipped", detail: "Tool call limit for this message reached." });
           continue;
         }
         const outcome = await this.runRequestedTool(call, parent!);
         results.push(frameToolResult(declared, outcome.content, outcome.isError, frame));
-        transcript.push(summaryLine(call.serverId, call.name, outcome.summary));
+        toolCalls.push({ serverId: call.serverId, name: call.name, outcome: outcome.outcome, ...(outcome.detail ? { detail: outcome.detail } : {}) });
       }
 
       // Carry the exchange forward so the model sees its own request and the results.
@@ -233,7 +237,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
         const closingText = closing.text.trim().length > 0
           ? closing.text
           : "I reached the tool call limit for this message before I could finish. Ask again to continue.";
-        return { reply: closingText, transcript };
+        return { reply: closingText, toolCalls };
       }
     }
   }
@@ -242,19 +246,22 @@ export class MissionControlDaemonClient implements MissionIpcService {
   private async runRequestedTool(
     call: { serverId: string; name: string; args: Readonly<Record<string, unknown>> },
     parent: BrowserWindow,
-  ): Promise<{ content: string; isError: boolean; summary: string }> {
+  ): Promise<{ content: string; isError: boolean; outcome: IntelligenceToolCall["outcome"]; detail?: string }> {
     try {
       const result = await this.invokeMcpTool({ intentId: randomUUID(), serverId: call.serverId, name: call.name, args: call.args }, parent);
       return {
         content: result.content,
         isError: result.isError,
-        summary: result.isError ? "the tool reported an error" : "ran",
+        outcome: result.isError ? "error" : "ran",
+        ...(result.isError ? { detail: "The tool reported an error." } : {}),
       };
     } catch (error) {
       // A declined confirmation, a policy denial, and a transport failure all land here.
       // The model is told the call did not happen so it cannot present a guess as evidence.
       const message = error instanceof Error ? error.message : "The tool could not be run.";
-      return { content: message, isError: true, summary: message };
+      // `message` can carry server-reported text, so it is recorded as a bounded detail that
+      // the interface renders as plain text, never as Orrery's own classification.
+      return { content: message, isError: true, outcome: "denied", detail: message };
     }
   }
 
@@ -679,32 +686,21 @@ function safeHostOf(endpoint: string | undefined): string {
 }
 
 /**
- * The header that introduces Orrery's own record of what ran.
+ * Restates a past turn's tool use for the model's benefit.
  *
- * The record is concatenated into the assistant message, so without a marker the model could
- * emit lookalike lines and the user would have no way to tell a real entry from a fabricated
- * one. The nonce is generated per turn, and the model never sees it.
+ * Tool records no longer live in the message text, so replayed history would otherwise lose
+ * the fact that a tool ran and the model could contradict its own earlier evidence. This is
+ * appended only to the copy sent upstream; the stored message keeps the model's text intact.
  */
-function renderTurnReply(reply: string, transcript: ReadonlyArray<string>): string {
-  if (transcript.length === 0) return reply;
-  const seal = randomUUID().slice(0, 8);
-  return [
-    `Orrery ran these tools [${seal}]:`,
-    ...transcript,
-    `[end ${seal}]`,
-    "",
-    reply,
-  ].join("\n");
-}
-
-/** One audit line. `summary` is Orrery-authored; server text can never reach it. */
-function summaryLine(serverId: string, name: string, summary: string): string {
-  return `- ${oneLine(serverId)}/${oneLine(name)}: ${oneLine(summary)}`;
-}
-
-/** Collapses newlines so a single entry can never become several. */
-function oneLine(value: string): string {
-  return value.replace(/[\r\n]+/g, " ").slice(0, 200);
+function historyTextFor(message: { readonly text: string; readonly toolCalls?: ReadonlyArray<IntelligenceToolCall> }): string {
+  if (!message.toolCalls || message.toolCalls.length === 0) return message.text;
+  const ran = message.toolCalls.filter(call => call.outcome === "ran").map(call => `${call.serverId}/${call.name}`);
+  const blocked = message.toolCalls.filter(call => call.outcome !== "ran").map(call => `${call.serverId}/${call.name}`);
+  const notes = [
+    ran.length > 0 ? `Tools used: ${ran.join(", ")}.` : "",
+    blocked.length > 0 ? `Tools that did not run: ${blocked.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+  return message.text ? `${message.text}\n\n(${notes})` : `(${notes})`;
 }
 
 /** The declared name for a resolved call, used only inside the frame header. */

@@ -19,6 +19,28 @@ export interface IntelligenceSettingsInput {
   readonly apiKey: string;
 }
 
+/**
+ * One tool the model requested during a turn, recorded as data rather than prose.
+ *
+ * These live beside the assistant's text, never inside it, so the interface can render them
+ * in a region the model cannot write into. That is what makes a fabricated tool record
+ * impossible rather than merely detectable: the model authors `text`, Orrery authors this.
+ */
+export interface IntelligenceToolCall {
+  readonly serverId: string;
+  readonly name: string;
+  /** Orrery-classified. `denied` covers a declined confirmation and a policy refusal. */
+  readonly outcome: "ran" | "error" | "denied" | "skipped";
+  /**
+   * Short explanation for a non-`ran` outcome.
+   *
+   * May be influenced by server-reported error text, because a transport or JSON-RPC failure
+   * carries the server's message. Bounded and single-line here, and must be rendered as plain
+   * text by any consumer.
+   */
+  readonly detail?: string;
+}
+
 export interface IntelligenceMessage {
   readonly id: string;
   readonly threadId: string;
@@ -28,6 +50,8 @@ export interface IntelligenceMessage {
   readonly createdAt: string;
   readonly missionId?: string;
   readonly truncated?: boolean;
+  /** Present only on an assistant message whose turn used tools. */
+  readonly toolCalls?: ReadonlyArray<IntelligenceToolCall>;
 }
 
 export interface IntelligenceThreadInput { readonly threadId: string }

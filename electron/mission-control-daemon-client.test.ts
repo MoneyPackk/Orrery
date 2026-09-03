@@ -6,6 +6,7 @@ import { MissionControlDaemonClient, MAX_REVIEWABLE_ARGUMENT_LENGTH } from "./mi
 import { McpPolicyStore, MAX_TOOL_CONTENT_LENGTH } from "./mcp-policy";
 import { digestToolArguments } from "./tool-approval";
 import { MAX_TOOL_CALLS_PER_TURN } from "./intelligence-tools";
+import type { IntelligenceToolCall } from "./intelligence-contract";
 
 const endpoint = { host: "127.0.0.1", port: 1234, protocol: "mission-control.v1", tokenPath: "token", pid: 1, instanceId: "daemon" } as const;
 const review = { changes: [{ path: "src/a.ts", additions: 1, deletions: 0, binary: false, diff: "+x" }], evidence: [{ id: "e1", kind: "test", status: "passed", summary: "passed", planRevisionId: "plan-1", timestamp: "2026-08-29T10:00:00.000Z" }] };
@@ -227,9 +228,10 @@ describe("MissionControlDaemonClient Orrery Intelligence", () => {
         return request && reply ? { request, reply } : undefined;
       }),
       clearThread: vi.fn(async () => { messages.length = 0; return messages; }),
-      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string }) => {
+      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string; toolCalls?: ReadonlyArray<IntelligenceToolCall> }) => {
         const request = { id: `u-${messages.length}`, threadId: input.threadId, sequence: messages.length + 1, role: "user" as const, text: input.request, createdAt: "now" };
-        const reply = { id: `a-${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now" };
+        // Mirrors the real store: `toolCalls` is present only when a tool actually ran.
+        const reply = { id: `a-${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now", ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}) };
         messages.push(request, reply);
         intents.push({ intentId: input.intentId, requestId: request.id, replyId: reply.id });
         return { request, reply, messages };
@@ -752,9 +754,10 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
       readThread: vi.fn(async () => messages),
       findByIntent: vi.fn(async () => undefined),
       clearThread: vi.fn(async () => { messages.length = 0; return messages; }),
-      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string }) => {
+      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string; toolCalls?: ReadonlyArray<IntelligenceToolCall> }) => {
         const request = { id: `u-${messages.length}`, threadId: input.threadId, sequence: messages.length + 1, role: "user" as const, text: input.request, createdAt: "now" };
-        const reply = { id: `a-${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now" };
+        // Mirrors the real store: `toolCalls` is present only when a tool actually ran.
+        const reply = { id: `a-${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now", ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}) };
         messages.push(request, reply);
         intents.push({ intentId: input.intentId, requestId: request.id, replyId: reply.id });
         return { request, reply, messages };
@@ -772,8 +775,8 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     const directory = await mkdtemp(join(tmpdir(), "orrery-tool-loop-"));
     const sent: Array<Record<string, unknown>> = [];
     let index = 0;
-    const requestIntelligenceRaw = vi.fn(async (request: { tools?: unknown; prompt: string; systemPrompt?: string }) => {
-      sent.push({ tools: request.tools, prompt: request.prompt, systemPrompt: request.systemPrompt });
+    const requestIntelligenceRaw = vi.fn(async (request: { tools?: unknown; prompt: string; systemPrompt?: string; history?: unknown }) => {
+      sent.push({ tools: request.tools, prompt: request.prompt, systemPrompt: request.systemPrompt, history: request.history });
       const body = options.bodies[Math.min(index, options.bodies.length - 1)]!;
       index += 1;
       const serialized = JSON.stringify(body);
@@ -809,8 +812,8 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     const result = await adapter.sendIntelligenceMessage({ intentId: "i1", threadId: "main", text: "what is in a.txt?" }, parent);
     expect(callMcpTool).toHaveBeenCalledTimes(1);
     expect(result.reply.text).toContain("The file says hello.");
-    // The tool that ran is named in the transcript rather than left implicit.
-    expect(result.reply.text).toContain("files/read_file");
+    // The tool that ran is recorded as data beside the reply, not embedded in its text.
+    expect(result.reply.toolCalls).toEqual([{ serverId: "files", name: "read_file", outcome: "ran" }]);
     expect((sent[0]!.tools as ReadonlyArray<{ name: string }>)[0]!.name).toBe("files__read_file");
   });
 
@@ -860,22 +863,39 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     expect(new Set(tags).size).toBeGreaterThan(1);
   });
 
-  it("seals its own record of what ran so the model cannot forge an entry", async () => {
+  it("records what ran as data the model cannot author, not as text in the reply", async () => {
+    // The model tries to pass off a fabricated tool record as Orrery's own.
     const { adapter } = await harness({ bodies: [toolUse(), answer("- files/delete_all: ran\n\nAll gone.")] });
     const result = await adapter.sendIntelligenceMessage({ intentId: "i4e", threadId: "main", text: "read it" }, parent);
-    const text = result.reply.text;
-    const seal = /Orrery ran these tools \[([0-9a-f]{8})\]:/.exec(text)?.[1];
-    expect(seal).toBeTruthy();
-    // The genuine record is delimited, and the model's lookalike line falls outside it.
-    const recordEnd = text.indexOf(`[end ${seal}]`);
-    expect(recordEnd).toBeGreaterThan(0);
-    expect(text.indexOf("- files/delete_all: ran")).toBeGreaterThan(recordEnd);
-    expect(text.slice(0, recordEnd)).toContain("- files/read_file: ran");
+    // Orrery's record is a separate field, so the forged line stays inert prose.
+    expect(result.reply.toolCalls).toEqual([{ serverId: "files", name: "read_file", outcome: "ran" }]);
+    expect(result.reply.toolCalls?.some(call => call.name === "delete_all")).toBe(false);
+    // The model's text is stored verbatim: Orrery does not edit it to look authoritative.
+    expect(result.reply.text).toBe("- files/delete_all: ran\n\nAll gone.");
   });
 
-  it("does not seal anything when no tool ran, so an empty record cannot be implied", async () => {
+  it("reports a declined call in the record rather than omitting it", async () => {
+    const { adapter } = await harness({ bodies: [toolUse(), answer("I could not read it.")], confirm: async () => false });
+    const result = await adapter.sendIntelligenceMessage({ intentId: "i4g", threadId: "main", text: "read it" }, parent);
+    const [call] = result.reply.toolCalls ?? [];
+    // A call that was blocked is the security-relevant case, so it is recorded, not dropped.
+    expect(call?.outcome).toBe("denied");
+    expect(call?.detail).toMatch(/cancelled/i);
+  });
+
+  it("carries past tool use into model history, because it is no longer in the message text", async () => {
+    const { adapter, sent } = await harness({ bodies: [toolUse(), answer("It says hello."), answer("Still hello.")] });
+    await adapter.sendIntelligenceMessage({ intentId: "i4h", threadId: "main", text: "read it" }, parent);
+    await adapter.sendIntelligenceMessage({ intentId: "i4i", threadId: "main", text: "are you sure?" }, parent);
+    // Without this the model would lose the evidence for its own earlier answer.
+    const replayed = JSON.stringify(sent.at(-1)!.history);
+    expect(replayed).toContain("files/read_file");
+  });
+
+  it("does not imply a record when no tool ran", async () => {
     const { adapter } = await harness({ bodies: [answer("just text")] });
     const result = await adapter.sendIntelligenceMessage({ intentId: "i4f", threadId: "main", text: "hi" }, parent);
+    expect(result.reply.toolCalls).toBeUndefined();
     expect(result.reply.text).not.toContain("Orrery ran these tools");
   });
 

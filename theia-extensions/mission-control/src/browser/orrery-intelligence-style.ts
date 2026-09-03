@@ -156,6 +156,35 @@ export const ORRERY_INTELLIGENCE_STYLE = `
   margin-bottom: 6px;
 }
 .orrery-intelligence__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; text-wrap: pretty; }
+/*
+ * Orrery's tool record. Deliberately unlike the message body: model prose is plain text on the
+ * panel background, this sits in its own inset block. The visual difference carries the trust
+ * boundary, so a model that writes a lookalike list in its text cannot reproduce this frame.
+ */
+.orrery-intelligence__tools {
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--orrery-accent) 28%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--orrery-accent) 7%, transparent);
+}
+.orrery-intelligence__tools-title {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-bottom: 5px;
+}
+.orrery-intelligence__tools-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.orrery-intelligence__tool { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 11px; }
+.orrery-intelligence__tool code { font-size: 11px; overflow-wrap: anywhere; }
+.orrery-intelligence__tool-outcome { font-size: 10px; opacity: 0.7; }
+.orrery-intelligence__tool-detail { flex-basis: 100%; font-size: 10px; opacity: 0.65; overflow-wrap: anywhere; }
+/* A call that did not run is the security-relevant case, so it is marked, not just listed. */
+.orrery-intelligence__tool--denied .orrery-intelligence__tool-outcome,
+.orrery-intelligence__tool--error .orrery-intelligence__tool-outcome { opacity: 0.95; font-weight: 600; }
 .orrery-intelligence__message small { display: block; margin-top: 6px; font-size: 10px; opacity: 0.6; }
 .orrery-intelligence__empty {
   margin: 0;

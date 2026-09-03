@@ -7,6 +7,7 @@ import { MissionControlDaemonClient } from "./mission-control-daemon-client";
 import { McpPolicyStore } from "./mcp-policy";
 import { callTool, createTransport, discoverTools, StdioMcpTransport } from "./mcp-client";
 import { MAX_TOOL_CALLS_PER_TURN } from "./intelligence-tools";
+import type { IntelligenceToolCall } from "./intelligence-contract";
 
 /**
  * End-to-end verification against a real MCP server process.
@@ -201,7 +202,7 @@ describe("real MCP server driven by the chat tool loop", () => {
   const parent = {} as never;
 
   function chatStore() {
-    const messages: Array<{ id: string; threadId: string; sequence: number; role: "user" | "assistant"; text: string; createdAt: string }> = [];
+    const messages: Array<{ id: string; threadId: string; sequence: number; role: "user" | "assistant"; text: string; createdAt: string; toolCalls?: ReadonlyArray<IntelligenceToolCall> }> = [];
     return {
       credentials: { provider: "anthropic" as const, model: "m", baseUrl: "https://api.example.com", apiKey: "k", updatedAt: "now" },
       readSettingsStatus: vi.fn(async () => ({ configured: true, hasCredential: true })),
@@ -210,9 +211,9 @@ describe("real MCP server driven by the chat tool loop", () => {
       readThread: vi.fn(async () => messages),
       findByIntent: vi.fn(async () => undefined),
       clearThread: vi.fn(async () => { messages.length = 0; return messages; }),
-      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string }) => {
+      appendExchange: vi.fn(async (input: { threadId: string; intentId: string; request: string; reply: string; toolCalls?: ReadonlyArray<IntelligenceToolCall> }) => {
         const request = { id: `u${messages.length}`, threadId: input.threadId, sequence: messages.length + 1, role: "user" as const, text: input.request, createdAt: "now" };
-        const reply = { id: `a${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now" };
+        const reply = { id: `a${messages.length}`, threadId: input.threadId, sequence: messages.length + 2, role: "assistant" as const, text: input.reply, createdAt: "now", ...(input.toolCalls && input.toolCalls.length > 0 ? { toolCalls: input.toolCalls } : {}) };
         messages.push(request, reply);
         return { request, reply, messages };
       }),
@@ -249,8 +250,8 @@ describe("real MCP server driven by the chat tool loop", () => {
     expect(prompts[1]).toContain("the note says hello");
     expect(prompts[1]).toContain("untrusted data");
     expect(result.reply.text).toContain("The note greets you.");
-    // Orrery's sealed record names the tool that actually ran.
-    expect(result.reply.text).toContain("fixture/read_note");
+    // Orrery's record names the tool that actually ran, as data beside the model's text.
+    expect(result.reply.toolCalls).toEqual([{ serverId: "fixture", name: "read_note", outcome: "ran" }]);
   }, 60_000);
 
   it("bounds real tool calls to the per-turn budget", async () => {

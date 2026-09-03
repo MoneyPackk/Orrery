@@ -6,11 +6,15 @@ import type {
   IntelligenceProviderKind,
   IntelligenceRole,
   IntelligenceSettingsStatus,
+  IntelligenceToolCall,
 } from "./intelligence-contract";
 import { hardenPrivatePath } from "../packages/mission-control-daemon/src/auth";
 
 export const MAX_MESSAGE_LENGTH = 8_000;
 export const MAX_THREAD_MESSAGES = 200;
+/** Matches the per-turn tool budget; a message cannot record more calls than a turn can make. */
+export const MAX_TOOL_CALLS_PER_MESSAGE = 5;
+export const MAX_TOOL_DETAIL_LENGTH = 200;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const PROVIDERS: ReadonlyArray<IntelligenceProviderKind> = ["openai-compatible", "anthropic", "ollama"];
 
@@ -111,13 +115,14 @@ export class IntelligenceStore {
     readonly missionId?: string;
     readonly request: string;
     readonly reply: string;
+    readonly toolCalls?: ReadonlyArray<IntelligenceToolCall>;
   }): Promise<{ readonly request: IntelligenceMessage; readonly reply: IntelligenceMessage; readonly messages: ReadonlyArray<IntelligenceMessage> }> {
     // Serialize read-modify-write so concurrent sends cannot drop an exchange.
     return this.serialize(async () => {
       const thread = await this.readStoredThread(input.threadId);
       const base = thread.messages.at(-1)?.sequence ?? 0;
       const request = this.createMessage(input.threadId, base + 1, "user", input.request, input.missionId);
-      const reply = this.createMessage(input.threadId, base + 2, "assistant", input.reply, input.missionId);
+      const reply = this.createMessage(input.threadId, base + 2, "assistant", input.reply, input.missionId, input.toolCalls);
       const messages = [...thread.messages, request, reply].slice(-MAX_THREAD_MESSAGES);
       const intents = [...thread.intents, { intentId: input.intentId, requestId: request.id, replyId: reply.id }].slice(-MAX_THREAD_MESSAGES);
       await this.writeThread({ threadId: input.threadId, messages, intents });
@@ -138,7 +143,7 @@ export class IntelligenceStore {
     return result;
   }
 
-  private createMessage(threadId: string, sequence: number, role: IntelligenceRole, text: string, missionId?: string): IntelligenceMessage {
+  private createMessage(threadId: string, sequence: number, role: IntelligenceRole, text: string, missionId?: string, toolCalls?: ReadonlyArray<IntelligenceToolCall>): IntelligenceMessage {
     const trimmed = text.slice(0, MAX_MESSAGE_LENGTH);
     return {
       id: randomUUID(),
@@ -149,6 +154,7 @@ export class IntelligenceStore {
       createdAt: new Date().toISOString(),
       ...(missionId ? { missionId } : {}),
       ...(trimmed.length < text.length ? { truncated: true } : {}),
+      ...(toolCalls && toolCalls.length > 0 ? { toolCalls: toolCalls.slice(0, MAX_TOOL_CALLS_PER_MESSAGE).map(normalizeToolCall) } : {}),
     };
   }
 
@@ -245,6 +251,7 @@ function isBoundedText(value: unknown, max: number): value is string {
 
 function isMessage(value: unknown): value is IntelligenceMessage {
   if (!isRecord(value)) return false;
+  if (value.toolCalls !== undefined && !isToolCallList(value.toolCalls)) return false;
   return isBoundedText(value.id, 200)
     && isBoundedText(value.threadId, 200)
     && typeof value.sequence === "number"
@@ -253,6 +260,34 @@ function isMessage(value: unknown): value is IntelligenceMessage {
     && typeof value.text === "string"
     && value.text.length <= MAX_MESSAGE_LENGTH
     && isBoundedText(value.createdAt, 64);
+}
+
+/**
+ * A tool record read back from disk is validated as strictly as one written.
+ *
+ * The transcript file is the one place a tampered tool record could enter, and the interface
+ * presents these as Orrery's own account of what ran, so a malformed entry is dropped rather
+ * than trusted. Anything unrecognized fails the whole message.
+ */
+function isToolCallList(value: unknown): value is ReadonlyArray<IntelligenceToolCall> {
+  return Array.isArray(value)
+    && value.length <= MAX_TOOL_CALLS_PER_MESSAGE
+    && value.every(entry => isRecord(entry)
+      && isBoundedText(entry.serverId, 128)
+      && isBoundedText(entry.name, 128)
+      && (entry.outcome === "ran" || entry.outcome === "error" || entry.outcome === "denied" || entry.outcome === "skipped")
+      && (entry.detail === undefined || (typeof entry.detail === "string" && entry.detail.length <= MAX_TOOL_DETAIL_LENGTH)));
+}
+
+/** Bounds and flattens a record so one entry can never render as several. */
+function normalizeToolCall(call: IntelligenceToolCall): IntelligenceToolCall {
+  const detail = call.detail?.replace(/[\r\n]+/g, " ").slice(0, MAX_TOOL_DETAIL_LENGTH);
+  return {
+    serverId: call.serverId.slice(0, 128),
+    name: call.name.slice(0, 128),
+    outcome: call.outcome,
+    ...(detail ? { detail } : {}),
+  };
 }
 
 function isIntentRecord(value: unknown): value is { intentId: string; requestId: string; replyId: string } {
