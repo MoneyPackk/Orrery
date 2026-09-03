@@ -14,7 +14,7 @@ declare module "@orrery/root-mission-control-daemon-client" {
     getIntelligenceSettings(): ReturnType<MissionControlHostService["getIntelligenceSettings"]>;
     setIntelligenceSettings(input: Parameters<MissionControlHostService["setIntelligenceSettings"]>[0]): ReturnType<MissionControlHostService["setIntelligenceSettings"]>;
     listIntelligenceMessages(input: Parameters<MissionControlHostService["listIntelligenceMessages"]>[0]): ReturnType<MissionControlHostService["listIntelligenceMessages"]>;
-    sendIntelligenceMessage(input: Parameters<MissionControlHostService["sendIntelligenceMessage"]>[0]): ReturnType<MissionControlHostService["sendIntelligenceMessage"]>;
+    sendIntelligenceMessage(input: Parameters<MissionControlHostService["sendIntelligenceMessage"]>[0], parent?: BrowserWindow): ReturnType<MissionControlHostService["sendIntelligenceMessage"]>;
     clearIntelligenceThread(input: Parameters<MissionControlHostService["clearIntelligenceThread"]>[0]): ReturnType<MissionControlHostService["clearIntelligenceThread"]>;
     reviewAndPromote(input: MissionReviewInput): ReturnType<MissionControlHostService["reviewAndPromote"]>;
     reviewAndPromoteInWindow(input: MissionReviewInput, parent: BrowserWindow): ReturnType<MissionControlHostService["reviewAndPromote"]>;

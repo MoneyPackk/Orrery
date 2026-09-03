@@ -8,8 +8,10 @@ import type { ProposeRepositoryInput } from "./contract";
 import { confirmTrustedRepository } from "./trusted-repository";
 import { confirmTrustedReview } from "./trusted-review";
 import { completeParentBootstrap } from "../scripts/daemon-bootstrap";
-import { IntelligenceStore, MAX_MESSAGE_LENGTH } from "./intelligence-store";
-import { requestIntelligenceReply, type FetchLike } from "./intelligence-provider";
+import { randomUUID } from "node:crypto";
+import { IntelligenceStore, MAX_MESSAGE_LENGTH, type IntelligenceCredentials } from "./intelligence-store";
+import { requestIntelligenceReply, requestIntelligenceRaw, ORRERY_SYSTEM_PROMPT, type FetchLike } from "./intelligence-provider";
+import { createToolFrame, declareTools, extractToolCalls, frameToolResult, ToolCallBudget, ToolCatalog, toolSystemPrompt } from "./intelligence-tools";
 import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceTranscript } from "./intelligence-contract";
 import { basename } from "node:path";
 import { McpPolicyStore, MAX_TOOL_CONTENT_LENGTH, requiresConsentEveryTime, effectiveRisk, assertServerInput, type McpToolRecord } from "./mcp-policy";
@@ -46,6 +48,7 @@ export interface MissionControlDaemonClientDependencies {
   stopDaemon?: typeof stopOwnedDaemon;
   createIntelligenceStore?: (runtimeDirectory: string) => IntelligenceStore;
   requestIntelligenceReply?: typeof requestIntelligenceReply;
+  requestIntelligenceRaw?: typeof requestIntelligenceRaw;
   fetchImpl?: FetchLike;
   createMcpPolicyStore?: (runtimeDirectory: string) => McpPolicyStore;
   createMcpTransport?: typeof createTransport;
@@ -124,7 +127,19 @@ export class MissionControlDaemonClient implements MissionIpcService {
     return { threadId: input.threadId, messages: [], settings: await store.readSettingsStatus() };
   }
 
-  async sendIntelligenceMessage(input: IntelligenceSendInput): Promise<IntelligenceSendResult> {
+  /**
+   * Answers a user message, optionally letting the model call MCP tools first.
+   *
+   * The model chooses the tool, but it cannot cause an effect: every call goes through the
+   * same per-call consent gate a human-initiated call uses, and standing consent still
+   * cannot exist for write, destructive, network, or spend risks. Tool output is framed as
+   * untrusted data before it re-enters the model's context, and a per-turn budget bounds how
+   * many confirmations one message can raise, because consent fatigue is the real failure mode.
+   *
+   * `parent` is optional: without a window there is nowhere to show a confirmation, so the
+   * turn runs text-only rather than silently executing anything.
+   */
+  async sendIntelligenceMessage(input: IntelligenceSendInput, parent?: BrowserWindow): Promise<IntelligenceSendResult> {
     if (input.text.length > MAX_MESSAGE_LENGTH) throw new Error("Message exceeds the supported length.");
     const store = await this.intelligence();
     const replayed = await store.findByIntent(input.threadId, input.intentId);
@@ -133,12 +148,132 @@ export class MissionControlDaemonClient implements MissionIpcService {
     const credentials = await store.readCredentials();
     if (!credentials) throw new Error("Orrery Intelligence is not configured. Add your provider key and model first.");
     const history = await store.readThread(input.threadId);
-    const reply = await (this.dependencies.requestIntelligenceReply ?? requestIntelligenceReply)(
-      { credentials, history: history.map(message => ({ role: message.role, text: message.text })), prompt: input.text },
-      this.dependencies.fetchImpl,
-    );
-    const appended = await store.appendExchange({ threadId: input.threadId, intentId: input.intentId, missionId: input.missionId, request: input.text, reply });
+    const turns = history.map(message => ({ role: message.role, text: message.text }));
+
+    const { reply, transcript } = await this.runIntelligenceTurn(credentials, turns, input.text, parent);
+    const appended = await store.appendExchange({
+      threadId: input.threadId,
+      intentId: input.intentId,
+      missionId: input.missionId,
+      request: input.text,
+      reply: renderTurnReply(reply, transcript),
+    });
     return { request: appended.request, reply: appended.reply };
+  }
+
+  /**
+   * Runs one turn, resolving tool calls until the model answers or the budget is spent.
+   *
+   * Returns the final text plus a human-readable record of what ran, so the transcript shows
+   * which tools were used rather than presenting tool-derived claims as unsourced assertions.
+   */
+  private async runIntelligenceTurn(
+    credentials: IntelligenceCredentials,
+    history: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
+    prompt: string,
+    parent?: BrowserWindow,
+  ): Promise<{ reply: string; transcript: ReadonlyArray<string> }> {
+    const request = this.dependencies.requestIntelligenceRaw ?? requestIntelligenceRaw;
+    const catalog = parent ? await this.declarableTools() : undefined;
+    if (!catalog || catalog.size === 0) {
+      // No tools to offer, so this is an ordinary text turn. Uses the plain reply path so a
+      // caller that only stubs `requestIntelligenceReply` still drives the whole turn.
+      const reply = await (this.dependencies.requestIntelligenceReply ?? requestIntelligenceReply)(
+        { credentials, history, prompt },
+        this.dependencies.fetchImpl,
+      );
+      return { reply, transcript: [] };
+    }
+
+    const budget = new ToolCallBudget();
+    // Per-turn and unguessable, so a server cannot close the frame and impersonate the warning.
+    const frame = createToolFrame();
+    const systemPrompt = `${ORRERY_SYSTEM_PROMPT} ${toolSystemPrompt(budget.remaining, frame)}`;
+    const conversation = [...history];
+    let turnPrompt = prompt;
+    const transcript: string[] = [];
+
+    for (;;) {
+      const response = await request(
+        { credentials, history: conversation, prompt: turnPrompt, systemPrompt, tools: catalog.declarations },
+        this.dependencies.fetchImpl,
+      );
+      const calls = extractToolCalls(credentials.provider, response.body, catalog);
+      if (calls.length === 0) {
+        if (!response.text.trim()) throw new Error("Orrery Intelligence returned an empty response.");
+        return { reply: response.text, transcript };
+      }
+
+      const results: string[] = [];
+      for (const call of calls) {
+        // Every declared name resolved through the catalog, so this is a real target.
+        const declared = qualifiedFor(catalog, call);
+        if (!budget.consume()) {
+          results.push(frameToolResult(declared, "Tool call budget for this message is exhausted. Answer with what you have.", true, frame));
+          transcript.push(summaryLine(call.serverId, call.name, "skipped, budget exhausted"));
+          continue;
+        }
+        const outcome = await this.runRequestedTool(call, parent!);
+        results.push(frameToolResult(declared, outcome.content, outcome.isError, frame));
+        transcript.push(summaryLine(call.serverId, call.name, outcome.summary));
+      }
+
+      // Carry the exchange forward so the model sees its own request and the results.
+      conversation.push({ role: "user", text: turnPrompt });
+      conversation.push({ role: "assistant", text: response.text.trim().length > 0 ? response.text : "(requested tools)" });
+      turnPrompt = results.join("\n\n");
+
+      if (budget.exhausted) {
+        const closing = await request(
+          { credentials, history: conversation, prompt: `${turnPrompt}\n\nNo further tool calls are available. Answer now.`, systemPrompt },
+          this.dependencies.fetchImpl,
+        );
+        // The model may still emit only a tool request it can no longer make. Report the
+        // exhausted budget rather than failing the whole turn and losing the work already done.
+        const closingText = closing.text.trim().length > 0
+          ? closing.text
+          : "I reached the tool call limit for this message before I could finish. Ask again to continue.";
+        return { reply: closingText, transcript };
+      }
+    }
+  }
+
+  /** Invokes one model-requested tool through the ordinary gated path. */
+  private async runRequestedTool(
+    call: { serverId: string; name: string; args: Readonly<Record<string, unknown>> },
+    parent: BrowserWindow,
+  ): Promise<{ content: string; isError: boolean; summary: string }> {
+    try {
+      const result = await this.invokeMcpTool({ intentId: randomUUID(), serverId: call.serverId, name: call.name, args: call.args }, parent);
+      return {
+        content: result.content,
+        isError: result.isError,
+        summary: result.isError ? "the tool reported an error" : "ran",
+      };
+    } catch (error) {
+      // A declined confirmation, a policy denial, and a transport failure all land here.
+      // The model is told the call did not happen so it cannot present a guess as evidence.
+      const message = error instanceof Error ? error.message : "The tool could not be run.";
+      return { content: message, isError: true, summary: message };
+    }
+  }
+
+  /** Tools the model may be offered: every registered tool except those explicitly denied. */
+  private async declarableTools(): Promise<ToolCatalog> {
+    const store = await this.mcp();
+    const [catalog, servers] = await Promise.all([store.readCatalog(), store.listServers()]);
+    const schemaFor = (serverId: string, name: string): Readonly<Record<string, unknown>> => {
+      const tool = servers.find(server => server.serverId === serverId)?.tools.find(entry => entry.name === name);
+      return tool?.inputSchema ?? { type: "object", properties: {} };
+    };
+    return declareTools(catalog.tools.map(tool => ({
+      serverId: tool.serverId,
+      name: tool.name,
+      description: tool.description,
+      risk: tool.risk,
+      decision: tool.decision,
+      inputSchema: schemaFor(tool.serverId, tool.name),
+    })));
   }
 
   /** Bounds provider spend and abuse from a compromised renderer: 20 requests per rolling minute. */
@@ -541,4 +676,42 @@ function safeHostOf(endpoint: string | undefined): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * The header that introduces Orrery's own record of what ran.
+ *
+ * The record is concatenated into the assistant message, so without a marker the model could
+ * emit lookalike lines and the user would have no way to tell a real entry from a fabricated
+ * one. The nonce is generated per turn, and the model never sees it.
+ */
+function renderTurnReply(reply: string, transcript: ReadonlyArray<string>): string {
+  if (transcript.length === 0) return reply;
+  const seal = randomUUID().slice(0, 8);
+  return [
+    `Orrery ran these tools [${seal}]:`,
+    ...transcript,
+    `[end ${seal}]`,
+    "",
+    reply,
+  ].join("\n");
+}
+
+/** One audit line. `summary` is Orrery-authored; server text can never reach it. */
+function summaryLine(serverId: string, name: string, summary: string): string {
+  return `- ${oneLine(serverId)}/${oneLine(name)}: ${oneLine(summary)}`;
+}
+
+/** Collapses newlines so a single entry can never become several. */
+function oneLine(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").slice(0, 200);
+}
+
+/** The declared name for a resolved call, used only inside the frame header. */
+function qualifiedFor(catalog: ToolCatalog, call: { serverId: string; name: string }): string {
+  for (const declaration of catalog.declarations) {
+    const target = catalog.resolve(declaration.name);
+    if (target && target.serverId === call.serverId && target.name === call.name) return declaration.name;
+  }
+  return `${call.serverId}/${call.name}`;
 }

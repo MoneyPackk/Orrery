@@ -18,6 +18,7 @@ interface HostService extends PublicHostService {
     registerMcpServer(input: Parameters<PublicHostService["registerMcpServer"]>[0]): ReturnType<PublicHostService["registerMcpServer"]>;
     setMcpToolDecision(input: Parameters<PublicHostService["setMcpToolDecision"]>[0]): ReturnType<PublicHostService["setMcpToolDecision"]>;
     invokeMcpTool(input: Parameters<PublicHostService["invokeMcpTool"]>[0]): ReturnType<PublicHostService["invokeMcpTool"]>;
+    sendIntelligenceMessage(input: Parameters<PublicHostService["sendIntelligenceMessage"]>[0]): ReturnType<PublicHostService["sendIntelligenceMessage"]>;
   } | null;
 }
 
@@ -62,6 +63,14 @@ export class MissionControlDaemonClient {
   }
   invokeMcpToolInWindow(input: Parameters<HostService["invokeMcpTool"]>[0], parent: BrowserWindow): ReturnType<HostService["invokeMcpTool"]> {
     return this.daemon.invokeMcpTool(input, parent);
+  }
+
+  /**
+   * The model may request a tool call while answering, and each call raises a native
+   * confirmation, so the chat turn is bound to the window that asked for it.
+   */
+  sendIntelligenceMessageInWindow(input: Parameters<HostService["sendIntelligenceMessage"]>[0], parent: BrowserWindow): ReturnType<HostService["sendIntelligenceMessage"]> {
+    return this.daemon.sendIntelligenceMessage(input, parent);
   }
 
   getSnapshot(input: Parameters<HostService["getSnapshot"]>[0]): ReturnType<HostService["getSnapshot"]> {
@@ -173,6 +182,7 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
           registerMcpServer: input => this.daemon.registerMcpServerInWindow(input, parent),
           setMcpToolDecision: input => this.daemon.setMcpToolDecisionInWindow(input, parent),
           invokeMcpTool: input => this.daemon.invokeMcpToolInWindow(input, parent),
+          sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessageInWindow(input, parent),
         } : null;
       },
       intakeRepository: input => this.daemon.intakeRepository(input, this.requireWindows().parentWindow() ?? (() => { throw new Error("Trusted Theia window unavailable."); })()),
@@ -185,7 +195,7 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
       getIntelligenceSettings: () => this.daemon.getIntelligenceSettings(),
       setIntelligenceSettings: input => this.daemon.setIntelligenceSettings(input),
       listIntelligenceMessages: input => this.daemon.listIntelligenceMessages(input),
-      sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessage(input),
+      sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessageInWindow(input, this.requireTrustedWindow()),
       clearIntelligenceThread: input => this.daemon.clearIntelligenceThread(input),
       reviewAndPromote: input => this.daemon.reviewAndPromote(input),
       listMcpCatalog: () => this.daemon.listMcpCatalog(),

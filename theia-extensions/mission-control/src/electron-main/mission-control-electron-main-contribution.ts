@@ -23,6 +23,8 @@ export interface MissionControlHostRequestContext {
   registerMcpServer(input: McpRegisterInput): Promise<McpCatalog>;
   setMcpToolDecision(input: McpSetDecisionInput): Promise<McpCatalog>;
   invokeMcpTool(input: McpInvokeInput): Promise<McpInvokeResult>;
+  /** Window-bound because the model may request a tool call, which raises a native confirmation. */
+  sendIntelligenceMessage(input: IntelligenceSendInput): Promise<import("../common/mission-control-contracts").IntelligenceSendResult>;
 }
 
 export interface ElectronMainMissionControlHostService extends MissionControlHostService {
@@ -227,13 +229,19 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
     [INTELLIGENCE_GET_SETTINGS_CHANNEL, trusted(() => host.getIntelligenceSettings())],
     [INTELLIGENCE_SET_SETTINGS_CHANNEL, guarded(parseIntelligenceSettings, input => host.setIntelligenceSettings(input))],
     [INTELLIGENCE_LIST_MESSAGES_CHANNEL, guarded(parseIntelligenceThread, input => host.listIntelligenceMessages(input))],
-    [INTELLIGENCE_SEND_MESSAGE_CHANNEL, guarded(parseIntelligenceSend, input => host.sendIntelligenceMessage(input))],
     [INTELLIGENCE_CLEAR_THREAD_CHANNEL, guarded(parseIntelligenceClear, input => host.clearIntelligenceThread(input))],
     [MCP_LIST_CATALOG_CHANNEL, trusted(() => host.listMcpCatalog())],
     [MCP_REMOVE_SERVER_CHANNEL, guarded(parseMcpRemoveServer, input => host.removeMcpServer(input))],
     [MCP_LIST_ACTIVITY_CHANNEL, trusted(() => host.listMcpActivity())],
     // Registering a server, granting a standing permission, and running a tool all
     // require native confirmation, so each is bound to the exact originating window.
+    // Sending a chat message is here too: the model may request a tool call, which
+    // raises the same confirmation and therefore needs a parent window.
+    [INTELLIGENCE_SEND_MESSAGE_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
+      const context = trustedContext(event, host);
+      if (values.length !== 1) throw new Error("Invalid mission IPC payload");
+      return context.sendIntelligenceMessage(parseIntelligenceSend(values[0]));
+    }],
     [MCP_REGISTER_SERVER_CHANNEL, async (event: IpcMainInvokeEvent, ...values: unknown[]) => {
       const context = trustedContext(event, host);
       if (values.length !== 1) throw new Error("Invalid mission IPC payload");

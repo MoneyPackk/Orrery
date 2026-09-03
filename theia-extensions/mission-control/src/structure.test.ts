@@ -103,6 +103,13 @@ describe("mission control Theia extension structure", () => {
     expect(contribution).not.toMatch(/guarded\(parseMcpInvoke|guarded\(parseMcpRegister|guarded\(parseMcpSetDecision/);
   });
 
+  it("binds a chat turn to its window, because the model may request a gated tool call", () => {
+    const contribution = read("src/electron-main/mission-control-electron-main-contribution.ts");
+    expect(contribution).toContain("context.sendIntelligenceMessage(parseIntelligenceSend(values[0]))");
+    // `guarded` has no window, so it could not raise the native confirmation a tool call needs.
+    expect(contribution).not.toMatch(/guarded\(parseIntelligenceSend/);
+  });
+
   it("renders the tool surface without trusting server output or reaching a transport", () => {
     const sources = ["orrery-tools-adapter.ts", "orrery-tools-view.tsx", "orrery-tools-widget.tsx"].map(file => read(`src/browser/${file}`)).join("\n");
     // Untrusted tool output must never become markup, and the renderer must never speak to a server itself.

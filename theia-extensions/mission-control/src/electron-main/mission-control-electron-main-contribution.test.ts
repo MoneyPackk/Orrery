@@ -31,7 +31,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     };
 
     registerMissionControlHostIpc(ipcMain as never, host as never);
-    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:send-message", "intelligence:v1:clear-thread", "mcp:v1:list-catalog", "mcp:v1:remove-server", "mcp:v1:list-activity", "mcp:v1:register-server", "mcp:v1:set-decision", "mcp:v1:invoke-tool", "mission:v1:promote", "mission:v1:host-ready"]);
+    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:clear-thread", "mcp:v1:list-catalog", "mcp:v1:remove-server", "mcp:v1:list-activity", "intelligence:v1:send-message", "mcp:v1:register-server", "mcp:v1:set-decision", "mcp:v1:invoke-tool", "mission:v1:promote", "mission:v1:host-ready"]);
     await handlers.get("mission:v1:list")!(event("file:///theia/index.html") as never);
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
@@ -91,8 +91,9 @@ describe("Mission Control Theia Electron main contribution", () => {
   it("delegates validated Orrery Intelligence payloads to the host", async () => {
     const handlers = new Map<string, (event: never, ...values: unknown[]) => unknown>();
     const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
+    const contextSend = vi.fn(async () => ({ request: {}, reply: {} }));
     const host = {
-      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn() }),
+      requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn(), sendIntelligenceMessage: contextSend }),
       getIntelligenceSettings: vi.fn(async () => ({ configured: false, hasCredential: false })),
       setIntelligenceSettings: vi.fn(async () => ({ configured: true, hasCredential: true })),
       listIntelligenceMessages: vi.fn(async () => ({ threadId: "main", messages: [], settings: { configured: true, hasCredential: true } })),
@@ -109,7 +110,9 @@ describe("Mission Control Theia Electron main contribution", () => {
     await handlers.get("intelligence:v1:clear-thread")!(trusted(), { intentId: "c-1", threadId: "main" });
     expect(host.getIntelligenceSettings).toHaveBeenCalledTimes(1);
     expect(host.setIntelligenceSettings).toHaveBeenCalledWith({ intentId: "s-1", provider: "anthropic", model: "claude-x", baseUrl: "https://api.example.com", apiKey: "key" });
-    expect(host.sendIntelligenceMessage).toHaveBeenCalledWith({ intentId: "i-2", threadId: "main", text: "hello", missionId: "mission-1" });
+    // Sending goes through the window-bound context, because a tool call it triggers needs a parent window.
+    expect(contextSend).toHaveBeenCalledWith({ intentId: "i-2", threadId: "main", text: "hello", missionId: "mission-1" });
+    expect(host.sendIntelligenceMessage).not.toHaveBeenCalled();
     expect(host.clearIntelligenceThread).toHaveBeenCalledWith({ intentId: "c-1", threadId: "main" });
   });
 

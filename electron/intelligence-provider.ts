@@ -1,5 +1,6 @@
 import type { IntelligenceProviderKind } from "./intelligence-contract";
 import { assertLoopbackOrHttps, MAX_MESSAGE_LENGTH, type IntelligenceCredentials } from "./intelligence-store";
+import { toolsForProvider, type ToolDeclaration } from "./intelligence-tools";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
@@ -15,6 +16,8 @@ export interface IntelligenceRequest {
   readonly history: ReadonlyArray<IntelligenceTurn>;
   readonly prompt: string;
   readonly systemPrompt?: string;
+  /** Tools offered to the model. Omitted or empty means a text-only turn. */
+  readonly tools?: ReadonlyArray<ToolDeclaration>;
 }
 
 export type FetchLike = (input: string, init: {
@@ -37,6 +40,22 @@ export async function requestIntelligenceReply(
   request: IntelligenceRequest,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
 ): Promise<string> {
+  const { body } = await requestIntelligenceRaw(request, fetchImpl);
+  const reply = extractReply(request.credentials.provider, body);
+  if (!reply.trim()) throw new Error("Orrery Intelligence returned an empty response.");
+  return reply.slice(0, MAX_MESSAGE_LENGTH);
+}
+
+/**
+ * Same call, returning the raw body so a caller can inspect requested tool calls.
+ *
+ * The tool loop needs both the text and any tool_use blocks from one response, and a
+ * second parse of an already-fetched body is far cheaper than a second billed request.
+ */
+export async function requestIntelligenceRaw(
+  request: IntelligenceRequest,
+  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+): Promise<{ readonly body: string; readonly text: string }> {
   const { credentials } = request;
   const endpoint = resolveEndpoint(credentials.provider, credentials.baseUrl);
   const controller = new AbortController();
@@ -60,11 +79,18 @@ export async function requestIntelligenceReply(
     const body = await response.text();
     if (body.length > MAX_RESPONSE_BYTES) throw new Error("Orrery Intelligence response exceeded the supported size.");
     if (!response.ok) throw new Error(`Orrery Intelligence request failed with status ${response.status}.`);
-    const reply = extractReply(credentials.provider, body);
-    if (!reply.trim()) throw new Error("Orrery Intelligence returned an empty response.");
-    return reply.slice(0, MAX_MESSAGE_LENGTH);
+    // A tool-calling turn legitimately carries no text, so emptiness is not an error here.
+    return { body, text: safeExtractReply(credentials.provider, body).slice(0, MAX_MESSAGE_LENGTH) };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function safeExtractReply(provider: IntelligenceProviderKind, body: string): string {
+  try {
+    return extractReply(provider, body);
+  } catch {
+    return "";
   }
 }
 
@@ -90,12 +116,15 @@ function buildHeaders(credentials: IntelligenceCredentials): Record<string, stri
 function buildBody(request: IntelligenceRequest): Record<string, unknown> {
   const { credentials, prompt, systemPrompt = ORRERY_SYSTEM_PROMPT } = request;
   const history = request.history.slice(-MAX_HISTORY).map(turn => ({ role: turn.role, content: turn.text }));
+  const tools = toolsForProvider(credentials.provider, request.tools ?? []);
+  // Omit the field entirely when empty: some endpoints reject an empty tools array.
+  const withTools = tools.length > 0 ? { tools } : {};
   if (credentials.provider === "anthropic") {
-    return { model: credentials.model, max_tokens: 2_048, system: systemPrompt, messages: [...history, { role: "user", content: prompt }] };
+    return { model: credentials.model, max_tokens: 2_048, system: systemPrompt, messages: [...history, { role: "user", content: prompt }], ...withTools };
   }
   const messages = [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: prompt }];
-  if (credentials.provider === "ollama") return { model: credentials.model, stream: false, messages };
-  return { model: credentials.model, messages };
+  if (credentials.provider === "ollama") return { model: credentials.model, stream: false, messages, ...withTools };
+  return { model: credentials.model, messages, ...withTools };
 }
 
 function extractReply(provider: IntelligenceProviderKind, body: string): string {
