@@ -16,6 +16,7 @@ export const INTELLIGENCE_LIST_MESSAGES_CHANNEL = "intelligence:v1:list-messages
 export const INTELLIGENCE_SEND_MESSAGE_CHANNEL = "intelligence:v1:send-message";
 export const INTELLIGENCE_CLEAR_THREAD_CHANNEL = "intelligence:v1:clear-thread";
 export const INTELLIGENCE_TURN_STATUS_CHANNEL = "intelligence:v1:turn-status";
+export const INTELLIGENCE_CANCEL_TURN_CHANNEL = "intelligence:v1:cancel-turn";
 export const MCP_LIST_CATALOG_CHANNEL = "mcp:v1:list-catalog";
 export const MCP_REGISTER_SERVER_CHANNEL = "mcp:v1:register-server";
 export const MCP_REMOVE_SERVER_CHANNEL = "mcp:v1:remove-server";
@@ -149,6 +150,8 @@ export interface IntelligenceTurnStatus {
   readonly completed: ReadonlyArray<IntelligenceToolCall>;
   /** Tool calls still available in this turn, so an unusually busy turn is visible. */
   readonly remainingCalls: number;
+  /** True once the operator has asked this turn to stop. Work already confirmed still runs. */
+  readonly stopping?: boolean;
 }
 
 /**
@@ -301,6 +304,7 @@ export interface MissionControlPublicApi {
   setIntelligenceSettings(input: IntelligenceSettingsInput): Promise<IntelligenceSettingsStatus>;
   listIntelligenceMessages(input: IntelligenceThreadInput): Promise<IntelligenceTranscript>;
   getIntelligenceTurnStatus(input: IntelligenceThreadInput): Promise<IntelligenceTurnStatus>;
+  cancelIntelligenceTurn(input: IntelligenceThreadInput): Promise<{ readonly cancelled: boolean }>;
   sendIntelligenceMessage(input: IntelligenceSendInput): Promise<IntelligenceSendResult>;
   clearIntelligenceThread(input: IntelligenceClearInput): Promise<IntelligenceTranscript>;
   listMcpCatalog(): Promise<McpCatalog>;

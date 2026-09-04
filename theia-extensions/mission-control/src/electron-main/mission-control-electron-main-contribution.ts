@@ -7,7 +7,7 @@ import {
   MISSION_GET_SNAPSHOT_CHANNEL,
   MISSION_LIST_CHANNEL,
   MISSION_REVIEW_CHANNEL,
-  INTELLIGENCE_GET_SETTINGS_CHANNEL, INTELLIGENCE_SET_SETTINGS_CHANNEL, INTELLIGENCE_LIST_MESSAGES_CHANNEL, INTELLIGENCE_SEND_MESSAGE_CHANNEL, INTELLIGENCE_CLEAR_THREAD_CHANNEL, INTELLIGENCE_TURN_STATUS_CHANNEL,
+  INTELLIGENCE_GET_SETTINGS_CHANNEL, INTELLIGENCE_SET_SETTINGS_CHANNEL, INTELLIGENCE_LIST_MESSAGES_CHANNEL, INTELLIGENCE_SEND_MESSAGE_CHANNEL, INTELLIGENCE_CLEAR_THREAD_CHANNEL, INTELLIGENCE_TURN_STATUS_CHANNEL, INTELLIGENCE_CANCEL_TURN_CHANNEL,
   MCP_LIST_CATALOG_CHANNEL, MCP_REGISTER_SERVER_CHANNEL, MCP_REMOVE_SERVER_CHANNEL, MCP_SET_DECISION_CHANNEL, MCP_INVOKE_TOOL_CHANNEL, MCP_LIST_ACTIVITY_CHANNEL,
   type MissionReviewInput,
   type MissionPromotionResult,
@@ -232,6 +232,8 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
     [INTELLIGENCE_CLEAR_THREAD_CHANNEL, guarded(parseIntelligenceClear, input => host.clearIntelligenceThread(input))],
     // A status read: no effect, no confirmation, so it needs no window binding.
     [INTELLIGENCE_TURN_STATUS_CHANNEL, guarded(parseIntelligenceThread, input => host.getIntelligenceTurnStatus(input))],
+    // Stopping is a withdrawal of work, not an authorization, so it needs no window binding.
+    [INTELLIGENCE_CANCEL_TURN_CHANNEL, guarded(parseIntelligenceThread, input => host.cancelIntelligenceTurn(input))],
     [MCP_LIST_CATALOG_CHANNEL, trusted(() => host.listMcpCatalog())],
     [MCP_REMOVE_SERVER_CHANNEL, guarded(parseMcpRemoveServer, input => host.removeMcpServer(input))],
     [MCP_LIST_ACTIVITY_CHANNEL, trusted(() => host.listMcpActivity())],

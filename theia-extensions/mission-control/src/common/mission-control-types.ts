@@ -43,6 +43,8 @@ export interface OrreryIntelligenceService {
   clear(threadId: string): Promise<OrreryIntelligenceState>;
   /** Reads in-flight turn status. Status only: it starts, stops, and authorizes nothing. */
   turnStatus(threadId: string): Promise<IntelligenceTurnStatus>;
+  /** Asks an in-flight turn to stop. Work already confirmed still completes and is recorded. */
+  cancelTurn(threadId: string): Promise<void>;
   configure(input: Omit<IntelligenceSettingsInput, "intentId">): Promise<OrreryIntelligenceState>;
 }
 

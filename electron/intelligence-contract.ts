@@ -36,6 +36,8 @@ export interface IntelligenceTurnStatus {
   readonly completed: ReadonlyArray<IntelligenceToolCall>;
   /** Tool calls still available in this turn, so an unusually busy turn is visible. */
   readonly remainingCalls: number;
+  /** True once the operator has asked this turn to stop. Work already confirmed still runs. */
+  readonly stopping?: boolean;
 }
 
 /**

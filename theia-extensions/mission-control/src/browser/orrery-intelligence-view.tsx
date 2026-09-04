@@ -5,6 +5,7 @@ import type { OrreryIntelligenceState } from "../common/mission-control-types";
 export interface OrreryIntelligenceViewProps {
   readonly state: OrreryIntelligenceState;
   readonly onSend: (text: string) => void;
+  readonly onStop: () => void;
   readonly onClear: () => void;
   readonly onConfigure: (input: Omit<IntelligenceSettingsInput, "intentId">) => void;
 }
@@ -42,7 +43,7 @@ function ToolCallRecord({ calls }: { readonly calls: ReadonlyArray<IntelligenceT
   </section>;
 }
 
-export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: OrreryIntelligenceViewProps): React.JSX.Element {
+export function OrreryIntelligenceView({ state, onSend, onStop, onClear, onConfigure }: OrreryIntelligenceViewProps): React.JSX.Element {
   const [provider, setProvider] = React.useState<IntelligenceProviderKind>(state.settings.provider ?? "openai-compatible");
   const [settingsOpen, setSettingsOpen] = React.useState(!state.settings.configured);
   const busy = Boolean(state.loading || state.sending);
@@ -111,6 +112,11 @@ export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: 
       {state.turn && state.turn.completed.length > 0 && <span className="orrery-intelligence__pending-progress">
         {state.turn.completed.length} of {state.turn.completed.length + state.turn.remainingCalls} tool calls used
       </span>}
+      {state.turn?.stopping
+        // Deliberately not "stopped": a confirmed call is still finishing, and saying otherwise
+        // would misreport what ran.
+        ? <span className="orrery-intelligence__pending-progress">Stopping after the current tool call.</span>
+        : <button type="button" className="orrery-intelligence__stop" onClick={onStop}>Stop</button>}
     </div>}
 
     <form className="orrery-intelligence__composer" aria-label="Send message" onSubmit={event => {

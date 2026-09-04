@@ -84,6 +84,14 @@ export class MissionControlDaemonClient implements MissionIpcService {
    * one: it trains click-through, which defeats the call budget.
    */
   private readonly turnStatus = new Map<string, IntelligenceTurnStatus>();
+  /**
+   * Threads whose in-flight turn has been asked to stop.
+   *
+   * A cancelled turn still persists what already ran. Tool effects are real once a call is
+   * confirmed, so discarding the record would turn cancel into a way to run a destructive tool
+   * and erase the evidence. Cancel stops future work; it never rewrites history.
+   */
+  private readonly cancelledTurns = new Set<string>();
   constructor(private readonly dependencies: MissionControlDaemonClientDependencies = {}) {}
   proposeRepository: MissionIpcService["proposeRepository"] = async (input) => this.mutate((client) => client.proposeRepository(input));
   async intakeRepository(input: ProposeRepositoryInput, parent: BrowserWindow): Promise<{ repositoryId: string; canonicalRoot: string; fingerprint: string }> {
@@ -130,6 +138,24 @@ export class MissionControlDaemonClient implements MissionIpcService {
   }
 
   /**
+   * Asks an in-flight turn to stop after the work already in progress.
+   *
+   * Returns whether a turn was actually running, so the surface can distinguish "stopped" from
+   * "there was nothing to stop" instead of implying it cancelled something. Cancelling does not
+   * abort a tool call that is already executing: that call was confirmed, its effect may already
+   * have happened, and pretending otherwise would be a lie about what ran.
+   */
+  async cancelIntelligenceTurn(input: IntelligenceThreadInput): Promise<{ readonly cancelled: boolean }> {
+    const current = this.turnStatus.get(input.threadId);
+    if (current?.active !== true) return { cancelled: false };
+    this.cancelledTurns.add(input.threadId);
+    // Reflected immediately rather than at the next publish, which may be a whole tool call
+    // away: the surface must acknowledge the request as soon as it is made.
+    this.turnStatus.set(input.threadId, { ...current, stopping: true });
+    return { cancelled: true };
+  }
+
+  /**
    * Reports what an in-flight turn is doing, so a native confirmation is never unexplained.
    *
    * Read-only and thread-scoped: it authorizes nothing and exposes no tool arguments, only which
@@ -173,12 +199,20 @@ export class MissionControlDaemonClient implements MissionIpcService {
 
     // Cleared in `finally`: a turn that throws must not leave the surface reporting work
     // forever, which would be indistinguishable from a hung tool call.
+    //
+    // The two cancel-flag deletes are deliberate redundancy, not load-bearing logic: a cancel
+    // is only recorded while `turnStatus` reports an active turn, and that status is deleted
+    // here, so no stale flag is reachable through the public API. They exist so a future caller
+    // that sets the flag by another route cannot silently disable tools for every later message.
+    // No test can distinguish them today; removing them would only widen a future mistake.
     let reply: string;
     let toolCalls: ReadonlyArray<IntelligenceToolCall>;
+    this.cancelledTurns.delete(input.threadId);
     try {
       ({ reply, toolCalls } = await this.runIntelligenceTurn(credentials, turns, input.text, input.threadId, parent));
     } finally {
       this.turnStatus.delete(input.threadId);
+      this.cancelledTurns.delete(input.threadId);
     }
     const appended = await store.appendExchange({
       threadId: input.threadId,
@@ -231,6 +265,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
         active: true,
         completed: [...toolCalls],
         remainingCalls: budget.remaining,
+        ...(this.cancelledTurns.has(threadId) ? { stopping: true } : {}),
         ...(pendingTool ? { pendingTool } : {}),
       });
     };
@@ -251,6 +286,14 @@ export class MissionControlDaemonClient implements MissionIpcService {
       for (const call of calls) {
         // Every declared name resolved through the catalog, so this is a real target.
         const declared = qualifiedFor(catalog, call);
+        // Checked before the call, never during it: a confirmed call may already have had an
+        // effect, so cancel stops what has not started rather than pretending to undo.
+        if (this.cancelledTurns.has(threadId)) {
+          results.push(frameToolResult(declared, "The operator stopped this turn. Do not request more tools.", true, frame));
+          toolCalls.push({ serverId: call.serverId, name: call.name, outcome: "skipped", detail: "You stopped this turn before this tool ran." });
+          publish();
+          continue;
+        }
         if (!budget.consume()) {
           results.push(frameToolResult(declared, "Tool call budget for this message is exhausted. Answer with what you have.", true, frame));
           toolCalls.push({ serverId: call.serverId, name: call.name, outcome: "skipped", detail: "Tool call limit for this message reached." });
@@ -271,16 +314,28 @@ export class MissionControlDaemonClient implements MissionIpcService {
       conversation.push({ role: "assistant", text: response.text.trim().length > 0 ? response.text : "(requested tools)" });
       turnPrompt = results.join("\n\n");
 
-      if (budget.exhausted) {
+      if (budget.exhausted || this.cancelledTurns.has(threadId)) {
+        const stopped = this.cancelledTurns.has(threadId);
+        // A cancelled turn still gets one closing request, so the work already done is
+        // summarized rather than thrown away. Tools are withheld so it cannot start more.
         const closing = await request(
-          { credentials, history: conversation, prompt: `${turnPrompt}\n\nNo further tool calls are available. Answer now.`, systemPrompt },
+          {
+            credentials,
+            history: conversation,
+            prompt: `${turnPrompt}\n\n${stopped
+              ? "The operator stopped this turn. Summarize what you found so far. Do not request tools."
+              : "No further tool calls are available. Answer now."}`,
+            systemPrompt,
+          },
           this.dependencies.fetchImpl,
         );
         // The model may still emit only a tool request it can no longer make. Report the
-        // exhausted budget rather than failing the whole turn and losing the work already done.
+        // reason rather than failing the whole turn and losing the work already done.
         const closingText = closing.text.trim().length > 0
           ? closing.text
-          : "I reached the tool call limit for this message before I could finish. Ask again to continue.";
+          : stopped
+            ? "You stopped this turn before I could finish. Ask again to continue."
+            : "I reached the tool call limit for this message before I could finish. Ask again to continue.";
         return { reply: closingText, toolCalls };
       }
     }

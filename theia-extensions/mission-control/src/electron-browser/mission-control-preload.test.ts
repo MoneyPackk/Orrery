@@ -29,7 +29,7 @@ describe("Theia Mission Control preload entry point", () => {
     const api = electron.exposeInMainWorld.mock.calls[0][1];
     expect(Object.keys(api)).toEqual([
       "intakeRepository", "create", "run", "cancel", "list", "getSnapshot", "inspect", "reviewAndPromote",
-      "getIntelligenceSettings", "setIntelligenceSettings", "listIntelligenceMessages", "sendIntelligenceMessage", "clearIntelligenceThread", "getIntelligenceTurnStatus",
+      "getIntelligenceSettings", "setIntelligenceSettings", "listIntelligenceMessages", "sendIntelligenceMessage", "clearIntelligenceThread", "getIntelligenceTurnStatus", "cancelIntelligenceTurn",
       "listMcpCatalog", "registerMcpServer", "removeMcpServer", "setMcpToolDecision", "invokeMcpTool", "listMcpActivity",
     ]);
 

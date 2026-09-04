@@ -67,7 +67,7 @@ describe("published extension package", () => {
       `preload.preload()`,
       `preload.preload()`,
       `if (exposureCount !== 1) throw new Error("Installed preload did not expose exactly once")`,
-      `if (Object.keys(exposedApi).join(",") !== "intakeRepository,create,run,cancel,list,getSnapshot,inspect,reviewAndPromote,getIntelligenceSettings,setIntelligenceSettings,listIntelligenceMessages,sendIntelligenceMessage,clearIntelligenceThread,getIntelligenceTurnStatus,listMcpCatalog,registerMcpServer,removeMcpServer,setMcpToolDecision,invokeMcpTool,listMcpActivity") throw new Error("Installed preload exposed an unexpected API")`,
+      `if (Object.keys(exposedApi).join(",") !== "intakeRepository,create,run,cancel,list,getSnapshot,inspect,reviewAndPromote,getIntelligenceSettings,setIntelligenceSettings,listIntelligenceMessages,sendIntelligenceMessage,clearIntelligenceThread,getIntelligenceTurnStatus,cancelIntelligenceTurn,listMcpCatalog,registerMcpServer,removeMcpServer,setMcpToolDecision,invokeMcpTool,listMcpActivity") throw new Error("Installed preload exposed an unexpected API")`,
     ].join(";");
     execFileSync(process.execPath, ["-e", resolutionScript], { cwd: consumer, stdio: "pipe" });
   }, 600_000);

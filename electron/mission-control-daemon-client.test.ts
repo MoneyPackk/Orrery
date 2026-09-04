@@ -953,6 +953,117 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     expect(seen.map(entry => entry.remaining)).toEqual([4, 3, 2, 1, 0]);
   });
 
+  it("skips the remaining tools in a batch once the operator cancels mid-batch", async () => {
+    // Two tools requested in one response. Cancel lands during the first confirmation, so the
+    // second must never be confirmed: this is the check inside the batch loop, not after it.
+    const twoCalls = {
+      content: [
+        { type: "tool_use", id: "c1", name: "files__read_file", input: {} },
+        { type: "tool_use", id: "c2", name: "files__read_file", input: {} },
+      ],
+    };
+    const { adapter, confirmToolCall } = await harness({
+      bodies: [twoCalls, answer("stopped")],
+      confirm: async () => {
+        await adapter.cancelIntelligenceTurn({ threadId: "main" });
+        return true;
+      },
+    });
+    const result = await adapter.sendIntelligenceMessage({ intentId: "i-batch", threadId: "main", text: "read both" }, parent);
+
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+    // The first ran and is recorded; the second is recorded as skipped, not silently dropped.
+    expect(result.reply.toolCalls).toEqual([
+      { serverId: "files", name: "read_file", outcome: "ran" },
+      { serverId: "files", name: "read_file", outcome: "skipped", detail: "You stopped this turn before this tool ran." },
+    ]);
+  });
+
+  it("stops requesting tools once the operator cancels, and still records what already ran", async () => {
+    // The model asks for a tool every round. Cancel lands during the first confirmation.
+    const { adapter, confirmToolCall, callMcpTool } = await harness({
+      bodies: [toolUse(), answer("Stopped early, here is what I found.")],
+      confirm: async () => {
+        await adapter.cancelIntelligenceTurn({ threadId: "main" });
+        return true;
+      },
+    });
+    const result = await adapter.sendIntelligenceMessage({ intentId: "i-cancel", threadId: "main", text: "loop" }, parent);
+
+    // The confirmed call still ran: cancel stops future work, it does not undo an effect.
+    expect(confirmToolCall).toHaveBeenCalledTimes(1);
+    expect(callMcpTool).toHaveBeenCalledTimes(1);
+    // And it is still recorded, so cancel can never be used to hide a tool that executed.
+    expect(result.reply.toolCalls).toEqual([{ serverId: "files", name: "read_file", outcome: "ran" }]);
+    expect(result.reply.text).toContain("Stopped early");
+  });
+
+  it("reports whether there was actually a turn to stop", async () => {
+    const { adapter } = await harness({ bodies: [answer("hi")] });
+    // Nothing running, so this must not claim to have cancelled anything.
+    expect(await adapter.cancelIntelligenceTurn({ threadId: "main" })).toEqual({ cancelled: false });
+
+    const seen: unknown[] = [];
+    const { adapter: busy } = await harness({
+      bodies: [toolUse(), answer("done")],
+      confirm: async () => {
+        seen.push(await busy.cancelIntelligenceTurn({ threadId: "main" }));
+        return true;
+      },
+    });
+    await busy.sendIntelligenceMessage({ intentId: "i-live", threadId: "main", text: "read it" }, parent);
+    expect(seen[0]).toEqual({ cancelled: true });
+  });
+
+  it("acknowledges the stop immediately rather than a tool call later", async () => {
+    const seen: Array<boolean | undefined> = [];
+    const { adapter } = await harness({
+      bodies: [toolUse(), answer("done")],
+      confirm: async () => {
+        await adapter.cancelIntelligenceTurn({ threadId: "main" });
+        seen.push((await adapter.getIntelligenceTurnStatus({ threadId: "main" })).stopping);
+        return true;
+      },
+    });
+    await adapter.sendIntelligenceMessage({ intentId: "i-ack", threadId: "main", text: "read it" }, parent);
+    expect(seen[0]).toBe(true);
+  });
+
+  it("does not let a cancel disable tools for the following turn", async () => {
+    // A cancel during turn one must not leak into turn two. Proven by cancelling mid-turn and
+    // then confirming the next message still reaches a tool.
+    let first = true;
+    const { adapter, callMcpTool } = await harness({
+      bodies: [toolUse(), answer("first"), toolUse(), answer("second")],
+      confirm: async () => {
+        if (first) {
+          first = false;
+          await adapter.cancelIntelligenceTurn({ threadId: "main" });
+        }
+        return true;
+      },
+    });
+    await adapter.sendIntelligenceMessage({ intentId: "i-one", threadId: "main", text: "read it" }, parent);
+    const callsAfterFirst = callMcpTool.mock.calls.length;
+    await adapter.sendIntelligenceMessage({ intentId: "i-two", threadId: "main", text: "read it again" }, parent);
+    expect(callMcpTool.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it("scopes a cancel to its own thread", async () => {
+    const seen: unknown[] = [];
+    const { adapter } = await harness({
+      bodies: [toolUse(), answer("done")],
+      confirm: async () => {
+        // Cancelling a different thread must not stop this one.
+        seen.push(await adapter.cancelIntelligenceTurn({ threadId: "other" }));
+        return true;
+      },
+    });
+    const result = await adapter.sendIntelligenceMessage({ intentId: "i-scope", threadId: "main", text: "read it" }, parent);
+    expect(seen[0]).toEqual({ cancelled: false });
+    expect(result.reply.toolCalls?.[0]?.outcome).toBe("ran");
+  });
+
   it("bounds tool calls per turn so a loop cannot fatigue the operator", async () => {
     // The model asks for a tool every time; only the budget can stop it.
     const { adapter, confirmToolCall, callMcpTool } = await harness({ bodies: [toolUse()] });

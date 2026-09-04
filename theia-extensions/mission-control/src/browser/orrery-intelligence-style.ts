@@ -213,6 +213,7 @@ export const ORRERY_INTELLIGENCE_STYLE = `
 .orrery-intelligence__pending-risk--destructive,
 .orrery-intelligence__pending-risk--spend { color: var(--theia-errorForeground); opacity: 1; }
 .orrery-intelligence__pending-progress { flex-basis: 100%; font-size: 10px; letter-spacing: 0; text-transform: none; opacity: 0.65; }
+.orrery-intelligence__stop { font-size: 10px; padding: 2px 8px; }
 .orrery-intelligence__pending::before {
   content: "";
   width: 5px;

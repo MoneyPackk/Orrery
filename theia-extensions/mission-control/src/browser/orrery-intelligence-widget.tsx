@@ -78,6 +78,23 @@ export class OrreryIntelligenceWidget extends ReactWidget {
     }, TURN_STATUS_POLL_MS);
   }
 
+  /**
+   * Asks the running turn to stop.
+   *
+   * Does not clear `sending`: the turn is still finishing the work it already confirmed, and
+   * reporting it as done would misrepresent what is happening. The surface learns it stopped
+   * through turn status, and the turn resolves normally with whatever it managed to do.
+   */
+  async stop(): Promise<void> {
+    if (!this.state.sending) return;
+    try {
+      await this.service.cancelTurn(this.state.threadId);
+    } catch (error) {
+      this.state = { ...this.state, error: message(error, "Unable to stop this turn.") };
+      this.update();
+    }
+  }
+
   async clear(): Promise<void> {
     await this.settle(() => this.service.clear(this.state.threadId), "Unable to clear the conversation.");
   }
@@ -103,6 +120,7 @@ export class OrreryIntelligenceWidget extends ReactWidget {
     return <OrreryIntelligenceView
       state={this.state}
       onSend={text => void this.send(text)}
+      onStop={() => void this.stop()}
       onClear={() => void this.clear()}
       onConfigure={input => void this.configure(input)}
     />;

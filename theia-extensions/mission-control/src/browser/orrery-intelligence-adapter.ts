@@ -34,6 +34,12 @@ export class OrreryIntelligenceDesktopAdapter implements OrreryIntelligenceServi
     return this.require().getIntelligenceTurnStatus({ threadId });
   }
 
+  async cancelTurn(threadId: string): Promise<void> {
+    // The result is intentionally discarded: the surface reflects the stop through turn
+    // status, so there is no second source of truth about whether it took effect.
+    await this.require().cancelIntelligenceTurn({ threadId });
+  }
+
   async configure(input: Omit<IntelligenceSettingsInput, "intentId">): Promise<OrreryIntelligenceState> {
     const api = this.require();
     await api.setIntelligenceSettings({ ...input, intentId: crypto.randomUUID() });

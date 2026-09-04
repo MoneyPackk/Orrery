@@ -18,7 +18,7 @@ const unconfigured: OrreryIntelligenceState = {
   messages: [],
   settings: { configured: false, hasCredential: false },
 };
-const actions = () => ({ onSend: vi.fn(), onClear: vi.fn(), onConfigure: vi.fn() });
+const actions = () => ({ onSend: vi.fn(), onStop: vi.fn(), onClear: vi.fn(), onConfigure: vi.fn() });
 
 describe("OrreryIntelligenceView", () => {
   it("renders the brand surface, transcript roles, and redacted provider status", () => {
@@ -166,6 +166,29 @@ describe("OrreryIntelligenceView", () => {
     render(<OrreryIntelligenceView state={configured} {...actions()} />);
     expect(screen.queryByText(/Waiting for you to confirm/)).not.toBeInTheDocument();
     expect(screen.queryByText(/tool calls used/)).not.toBeInTheDocument();
+  });
+
+  it("offers a stop while a turn is running", async () => {
+    const handlers = actions();
+    render(<OrreryIntelligenceView state={{ ...configured, sending: true }} {...handlers} />);
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(handlers.onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer a stop when nothing is running", () => {
+    render(<OrreryIntelligenceView state={configured} {...actions()} />);
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+  });
+
+  it("says it is stopping after the current call rather than claiming it stopped", () => {
+    render(<OrreryIntelligenceView state={{
+      ...configured,
+      sending: true,
+      turn: { threadId: "main", active: true, completed: [], remainingCalls: 4, stopping: true },
+    }} {...actions()} />);
+    // A confirmed call is still finishing, so the wording must not imply it was undone.
+    expect(screen.getByText(/Stopping after the current tool call/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
   it("clears the conversation and disables clear when empty", async () => {

@@ -15,7 +15,7 @@ function widgetWith(service: Partial<OrreryIntelligenceService>): { widget: Orre
     snapshot(): OrreryIntelligenceState { return this.state; }
   }
   const widget = new TestWidget();
-  Object.defineProperty(widget, "service", { value: { load: vi.fn(async () => state()), send: vi.fn(async () => state()), clear: vi.fn(async () => state()), configure: vi.fn(async () => state()), turnStatus: vi.fn(async () => ({ threadId: ORRERY_INTELLIGENCE_THREAD_ID, active: false, completed: [], remainingCalls: 5 })), ...service } });
+  Object.defineProperty(widget, "service", { value: { load: vi.fn(async () => state()), send: vi.fn(async () => state()), clear: vi.fn(async () => state()), configure: vi.fn(async () => state()), turnStatus: vi.fn(async () => ({ threadId: ORRERY_INTELLIGENCE_THREAD_ID, active: false, completed: [], remainingCalls: 5 })), cancelTurn: vi.fn(async () => undefined), ...service } });
   return { widget, read: () => widget.snapshot() };
 }
 
@@ -125,5 +125,43 @@ describe("OrreryIntelligenceWidget", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("asks the running turn to stop without reporting it as finished", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const cancelTurn = vi.fn(async () => undefined);
+    const { widget, read } = widgetWith({ send: vi.fn(async () => { await gate; return state(); }), cancelTurn });
+    const sending = widget.send("go");
+    await widget.stop();
+
+    expect(cancelTurn).toHaveBeenCalledWith(ORRERY_INTELLIGENCE_THREAD_ID);
+    // Still sending: the confirmed work is finishing, and saying otherwise would misreport it.
+    expect(read().sending).toBe(true);
+    release();
+    await sending;
+    expect(read().sending).toBe(false);
+  });
+
+  it("ignores a stop when no turn is running", async () => {
+    const cancelTurn = vi.fn(async () => undefined);
+    const { widget } = widgetWith({ cancelTurn });
+    await widget.stop();
+    expect(cancelTurn).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failed stop without ending the turn", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { widget, read } = widgetWith({
+      send: vi.fn(async () => { await gate; return state(); }),
+      cancelTurn: vi.fn(async () => { throw new Error("could not stop"); }),
+    });
+    const sending = widget.send("go");
+    await widget.stop();
+    expect(read().error).toBe("could not stop");
+    expect(read().sending).toBe(true);
+    release();
+    await sending;
   });
 });
