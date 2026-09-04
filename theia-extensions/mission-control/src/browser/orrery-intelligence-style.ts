@@ -202,7 +202,17 @@ export const ORRERY_INTELLIGENCE_STYLE = `
   letter-spacing: 0.06em;
   text-transform: uppercase;
   opacity: 0.72;
+  flex-wrap: wrap;
 }
+.orrery-intelligence__pending code { font-size: 11px; text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }
+/* An elevated risk is marked, because that is the case where confirming matters most. The
+   severity split matches the tools surface, so one risk never reads as milder in chat. */
+.orrery-intelligence__pending-risk { font-size: 9px; letter-spacing: 0.08em; border: 1px solid currentColor; border-radius: 3px; padding: 1px 5px; opacity: 0.8; }
+.orrery-intelligence__pending-risk--write,
+.orrery-intelligence__pending-risk--network { color: var(--theia-editorWarning-foreground, var(--theia-foreground)); opacity: 1; }
+.orrery-intelligence__pending-risk--destructive,
+.orrery-intelligence__pending-risk--spend { color: var(--theia-errorForeground); opacity: 1; }
+.orrery-intelligence__pending-progress { flex-basis: 100%; font-size: 10px; letter-spacing: 0; text-transform: none; opacity: 0.65; }
 .orrery-intelligence__pending::before {
   content: "";
   width: 5px;
@@ -259,7 +269,7 @@ export const ORRERY_INTELLIGENCE_STYLE = `
   .orrery-intelligence__error {
     animation: orrery-intelligence-fade 160ms ease both;
   }
-  .orrery-intelligence__pending::before { animation: none; opacity: 0.7; }
+.orrery-intelligence__pending::before { animation: none; opacity: 0.7; }
   .orrery-intelligence button:active:not(:disabled) { transform: none; }
 }
 @keyframes orrery-intelligence-fade {

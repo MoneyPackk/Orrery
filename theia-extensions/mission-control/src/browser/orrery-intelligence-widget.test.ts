@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OrreryIntelligenceService, OrreryIntelligenceState } from "../common/mission-control-types";
-import { ORRERY_INTELLIGENCE_THREAD_ID, ORRERY_INTELLIGENCE_WIDGET_ID, OrreryIntelligenceWidget } from "./orrery-intelligence-widget";
+import { ORRERY_INTELLIGENCE_THREAD_ID, ORRERY_INTELLIGENCE_WIDGET_ID, OrreryIntelligenceWidget, TURN_STATUS_POLL_MS } from "./orrery-intelligence-widget";
 
 const state = (overrides: Partial<OrreryIntelligenceState> = {}): OrreryIntelligenceState => ({
   threadId: ORRERY_INTELLIGENCE_THREAD_ID,
@@ -15,7 +15,7 @@ function widgetWith(service: Partial<OrreryIntelligenceService>): { widget: Orre
     snapshot(): OrreryIntelligenceState { return this.state; }
   }
   const widget = new TestWidget();
-  Object.defineProperty(widget, "service", { value: { load: vi.fn(async () => state()), send: vi.fn(async () => state()), clear: vi.fn(async () => state()), configure: vi.fn(async () => state()), ...service } });
+  Object.defineProperty(widget, "service", { value: { load: vi.fn(async () => state()), send: vi.fn(async () => state()), clear: vi.fn(async () => state()), configure: vi.fn(async () => state()), turnStatus: vi.fn(async () => ({ threadId: ORRERY_INTELLIGENCE_THREAD_ID, active: false, completed: [], remainingCalls: 5 })), ...service } });
   return { widget, read: () => widget.snapshot() };
 }
 
@@ -80,5 +80,50 @@ describe("OrreryIntelligenceWidget", () => {
     release();
     await first;
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls turn status while a turn runs and stops when it finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const turnStatus = vi.fn(async () => ({ threadId: ORRERY_INTELLIGENCE_THREAD_ID, active: true, completed: [], remainingCalls: 4, pendingTool: { serverId: "files", name: "purge", risk: "destructive" } }));
+      const { widget, read } = widgetWith({ send: vi.fn(async () => { await gate; return state(); }), turnStatus });
+      const sending = widget.send("go");
+
+      await vi.advanceTimersByTimeAsync(TURN_STATUS_POLL_MS * 2);
+      expect(turnStatus).toHaveBeenCalled();
+      expect(read().turn?.pendingTool?.name).toBe("purge");
+
+      release();
+      await sending;
+      // The poll must stop, or a disposed widget keeps calling into main forever.
+      const afterTurn = turnStatus.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(TURN_STATUS_POLL_MS * 4);
+      expect(turnStatus.mock.calls.length).toBe(afterTurn);
+      // Stale progress must not survive the turn it described.
+      expect(read().turn).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fail a turn when the status read fails", async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const turnStatus = vi.fn(async () => { throw new Error("status unavailable"); });
+      const { widget, read } = widgetWith({ send: vi.fn(async () => { await gate; return state({ messages: [{ id: "m", threadId: "main", sequence: 1, role: "assistant", text: "done", createdAt: "now" }] }); }), turnStatus });
+      const sending = widget.send("go");
+      await vi.advanceTimersByTimeAsync(TURN_STATUS_POLL_MS * 2);
+      release();
+      await sending;
+      // Status is only an explanation, so losing it must not surface as a failed answer.
+      expect(read().error).toBeUndefined();
+      expect(read().messages).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

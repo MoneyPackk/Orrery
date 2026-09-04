@@ -11,8 +11,8 @@ import { completeParentBootstrap } from "../scripts/daemon-bootstrap";
 import { randomUUID } from "node:crypto";
 import { IntelligenceStore, MAX_MESSAGE_LENGTH, type IntelligenceCredentials } from "./intelligence-store";
 import { requestIntelligenceReply, requestIntelligenceRaw, ORRERY_SYSTEM_PROMPT, type FetchLike } from "./intelligence-provider";
-import { createToolFrame, declareTools, extractToolCalls, frameToolResult, ToolCallBudget, ToolCatalog, toolSystemPrompt } from "./intelligence-tools";
-import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceToolCall, IntelligenceTranscript } from "./intelligence-contract";
+import { createToolFrame, declareTools, extractToolCalls, frameToolResult, MAX_TOOL_CALLS_PER_TURN, ToolCallBudget, ToolCatalog, toolSystemPrompt } from "./intelligence-tools";
+import type { IntelligenceClearInput, IntelligenceSendInput, IntelligenceSendResult, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceThreadInput, IntelligenceToolCall, IntelligenceTranscript, IntelligenceTurnStatus } from "./intelligence-contract";
 import { basename } from "node:path";
 import { McpPolicyStore, MAX_TOOL_CONTENT_LENGTH, requiresConsentEveryTime, effectiveRisk, assertServerInput, type McpToolRecord } from "./mcp-policy";
 import { callTool, createTransport, discoverTools, type McpFetchLike, type McpTransport } from "./mcp-client";
@@ -76,6 +76,14 @@ export class MissionControlDaemonClient implements MissionIpcService {
   private mcpStore?: Promise<McpPolicyStore>;
   private toolCalls: number[] = [];
   private readonly registrationCalls: number[] = [];
+  /**
+   * Live state of an in-flight chat turn, keyed by thread.
+   *
+   * Held in main, never in the renderer, and read through a status-only channel. A tool call
+   * raises a native modal, and an unexplained modal is a security problem rather than a polish
+   * one: it trains click-through, which defeats the call budget.
+   */
+  private readonly turnStatus = new Map<string, IntelligenceTurnStatus>();
   constructor(private readonly dependencies: MissionControlDaemonClientDependencies = {}) {}
   proposeRepository: MissionIpcService["proposeRepository"] = async (input) => this.mutate((client) => client.proposeRepository(input));
   async intakeRepository(input: ProposeRepositoryInput, parent: BrowserWindow): Promise<{ repositoryId: string; canonicalRoot: string; fingerprint: string }> {
@@ -121,6 +129,18 @@ export class MissionControlDaemonClient implements MissionIpcService {
     return { threadId: input.threadId, messages, settings };
   }
 
+  /**
+   * Reports what an in-flight turn is doing, so a native confirmation is never unexplained.
+   *
+   * Read-only and thread-scoped: it authorizes nothing and exposes no tool arguments, only which
+   * tool is being confirmed and what has already resolved. An idle thread reports `active: false`
+   * rather than absent state, so the surface can distinguish "nothing running" from "unknown".
+   */
+  async getIntelligenceTurnStatus(input: IntelligenceThreadInput): Promise<IntelligenceTurnStatus> {
+    return this.turnStatus.get(input.threadId)
+      ?? { threadId: input.threadId, active: false, completed: [], remainingCalls: MAX_TOOL_CALLS_PER_TURN };
+  }
+
   async clearIntelligenceThread(input: IntelligenceClearInput): Promise<IntelligenceTranscript> {
     const store = await this.intelligence();
     await store.clearThread(input.threadId);
@@ -151,7 +171,15 @@ export class MissionControlDaemonClient implements MissionIpcService {
     // Tool use is restated for the model, because it is no longer carried in the message text.
     const turns = history.map(message => ({ role: message.role, text: historyTextFor(message) }));
 
-    const { reply, toolCalls } = await this.runIntelligenceTurn(credentials, turns, input.text, parent);
+    // Cleared in `finally`: a turn that throws must not leave the surface reporting work
+    // forever, which would be indistinguishable from a hung tool call.
+    let reply: string;
+    let toolCalls: ReadonlyArray<IntelligenceToolCall>;
+    try {
+      ({ reply, toolCalls } = await this.runIntelligenceTurn(credentials, turns, input.text, input.threadId, parent));
+    } finally {
+      this.turnStatus.delete(input.threadId);
+    }
     const appended = await store.appendExchange({
       threadId: input.threadId,
       intentId: input.intentId,
@@ -175,6 +203,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
     credentials: IntelligenceCredentials,
     history: ReadonlyArray<{ role: "user" | "assistant"; text: string }>,
     prompt: string,
+    threadId: string,
     parent?: BrowserWindow,
   ): Promise<{ reply: string; toolCalls: ReadonlyArray<IntelligenceToolCall> }> {
     const request = this.dependencies.requestIntelligenceRaw ?? requestIntelligenceRaw;
@@ -196,6 +225,16 @@ export class MissionControlDaemonClient implements MissionIpcService {
     const conversation = [...history];
     let turnPrompt = prompt;
     const toolCalls: IntelligenceToolCall[] = [];
+    const publish = (pendingTool?: IntelligenceTurnStatus["pendingTool"]) => {
+      this.turnStatus.set(threadId, {
+        threadId,
+        active: true,
+        completed: [...toolCalls],
+        remainingCalls: budget.remaining,
+        ...(pendingTool ? { pendingTool } : {}),
+      });
+    };
+    publish();
 
     for (;;) {
       const response = await request(
@@ -215,11 +254,16 @@ export class MissionControlDaemonClient implements MissionIpcService {
         if (!budget.consume()) {
           results.push(frameToolResult(declared, "Tool call budget for this message is exhausted. Answer with what you have.", true, frame));
           toolCalls.push({ serverId: call.serverId, name: call.name, outcome: "skipped", detail: "Tool call limit for this message reached." });
+          publish();
           continue;
         }
+        // Published before the call, because this is what explains the native modal that is
+        // about to appear. Risk comes from the catalog, never from the model's request.
+        publish({ serverId: call.serverId, name: call.name, risk: catalog.resolve(declared)!.risk });
         const outcome = await this.runRequestedTool(call, parent!);
         results.push(frameToolResult(declared, outcome.content, outcome.isError, frame));
         toolCalls.push({ serverId: call.serverId, name: call.name, outcome: outcome.outcome, ...(outcome.detail ? { detail: outcome.detail } : {}) });
+        publish();
       }
 
       // Carry the exchange forward so the model sees its own request and the results.

@@ -28,7 +28,7 @@ describe("chat tool declarations", () => {
   it("declares one namespaced tool per server", () => {
     const catalog = declareTools([tool(), tool({ serverId: "docs" })]);
     expect(catalog.declarations.map(entry => entry.name)).toEqual(["files__read_file", "docs__read_file"]);
-    expect(catalog.resolve("files__read_file")).toEqual({ serverId: "files", name: "read_file" });
+    expect(catalog.resolve("files__read_file")).toMatchObject({ serverId: "files", name: "read_file" });
   });
 
   it("resolves a declared name back to its exact target rather than parsing it", () => {
@@ -41,21 +41,32 @@ describe("chat tool declarations", () => {
     const names = catalog.declarations.map(entry => entry.name);
     expect(new Set(names).size).toBe(2);
     const targets = names.map(name => catalog.resolve(name));
-    expect(targets).toContainEqual({ serverId: "a", name: "_b" });
-    expect(targets).toContainEqual({ serverId: "a_", name: "b" });
+    expect(targets).toContainEqual(expect.objectContaining({ serverId: "a", name: "_b" }));
+    expect(targets).toContainEqual(expect.objectContaining({ serverId: "a_", name: "b" }));
   });
 
   it("keeps a server whose id contains the delimiter addressable", () => {
     const catalog = declareTools([tool({ serverId: "a__b", name: "c" })]);
     const [declared] = catalog.declarations;
-    expect(catalog.resolve(declared!.name)).toEqual({ serverId: "a__b", name: "c" });
+    expect(catalog.resolve(declared!.name)).toMatchObject({ serverId: "a__b", name: "c" });
+  });
+
+  it("carries each tool's real risk, so a caller never has to guess it", () => {
+    // The pending-tool warning shown before a native confirmation reads risk from here. A
+    // fallback would understate a destructive tool as a read, in the one place it matters most.
+    const catalog = declareTools([
+      tool({ serverId: "files", name: "read_file", risk: "read" }),
+      tool({ serverId: "files", name: "purge", risk: "destructive" }),
+    ]);
+    const risks = catalog.declarations.map(declaration => catalog.resolve(declaration.name)!.risk);
+    expect(risks).toEqual(["read", "destructive"]);
   });
 
   it("keeps a server whose id begins with the delimiter callable", () => {
     // A leading delimiter previously made a tool advertised but permanently unreachable.
     const catalog = declareTools([tool({ serverId: "__x", name: "run" })]);
     const [declared] = catalog.declarations;
-    expect(catalog.resolve(declared!.name)).toEqual({ serverId: "__x", name: "run" });
+    expect(catalog.resolve(declared!.name)).toMatchObject({ serverId: "__x", name: "run" });
   });
 
   it("refuses to let one server shadow another server's declared name", () => {
@@ -65,8 +76,8 @@ describe("chat tool declarations", () => {
     ]);
     const names = catalog.declarations.map(entry => entry.name);
     expect(new Set(names).size).toBe(2);
-    expect(catalog.resolve(names[0]!)).toEqual({ serverId: "files_", name: "read" });
-    expect(catalog.resolve(names[1]!)).toEqual({ serverId: "files", name: "_read" });
+    expect(catalog.resolve(names[0]!)).toMatchObject({ serverId: "files_", name: "read" });
+    expect(catalog.resolve(names[1]!)).toMatchObject({ serverId: "files", name: "_read" });
   });
 
   it("rejects a name that was not declared this turn", () => {

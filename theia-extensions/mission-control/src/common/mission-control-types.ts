@@ -1,4 +1,4 @@
-import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput, IntelligenceMessage, IntelligenceSettingsInput, IntelligenceSettingsStatus, McpActivityEntry, McpCatalog, McpInvokeResult, McpRegisterInput, McpServerStatus, McpToolDecision, McpToolStatus } from "./mission-control-contracts";
+import type { Mission, MissionControlPublicApi, MissionListItem, ReviewDecision, RepositoryIntakeInput, MissionCreateInput, MissionRunInput, MissionCancelInput, IntelligenceMessage, IntelligenceSettingsInput, IntelligenceSettingsStatus, IntelligenceTurnStatus, McpActivityEntry, McpCatalog, McpInvokeResult, McpRegisterInput, McpServerStatus, McpToolDecision, McpToolStatus } from "./mission-control-contracts";
 
 export const MissionControlService = Symbol("MissionControlService");
 export const OrreryIntelligenceService = Symbol("OrreryIntelligenceService");
@@ -32,6 +32,8 @@ export interface OrreryIntelligenceState {
   readonly settings: IntelligenceSettingsStatus;
   readonly loading?: boolean;
   readonly sending?: boolean;
+  /** Live state of an in-flight turn, so a native confirmation is never unexplained. */
+  readonly turn?: IntelligenceTurnStatus;
   readonly error?: string;
 }
 
@@ -39,6 +41,8 @@ export interface OrreryIntelligenceService {
   load(threadId: string): Promise<OrreryIntelligenceState>;
   send(threadId: string, text: string, missionId?: string): Promise<OrreryIntelligenceState>;
   clear(threadId: string): Promise<OrreryIntelligenceState>;
+  /** Reads in-flight turn status. Status only: it starts, stops, and authorizes nothing. */
+  turnStatus(threadId: string): Promise<IntelligenceTurnStatus>;
   configure(input: Omit<IntelligenceSettingsInput, "intentId">): Promise<OrreryIntelligenceState>;
 }
 

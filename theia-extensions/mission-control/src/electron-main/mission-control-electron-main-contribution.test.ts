@@ -31,7 +31,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     };
 
     registerMissionControlHostIpc(ipcMain as never, host as never);
-    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:clear-thread", "mcp:v1:list-catalog", "mcp:v1:remove-server", "mcp:v1:list-activity", "intelligence:v1:send-message", "mcp:v1:register-server", "mcp:v1:set-decision", "mcp:v1:invoke-tool", "mission:v1:promote", "mission:v1:host-ready"]);
+    expect([...handlers.keys()]).toEqual(["mission:v1:intake-repository", "mission:v1:create", "mission:v1:run", "mission:v1:cancel", "mission:v1:list", "mission:v1:get-snapshot", "mission:v1:inspect", "intelligence:v1:get-settings", "intelligence:v1:set-settings", "intelligence:v1:list-messages", "intelligence:v1:clear-thread", "intelligence:v1:turn-status", "mcp:v1:list-catalog", "mcp:v1:remove-server", "mcp:v1:list-activity", "intelligence:v1:send-message", "mcp:v1:register-server", "mcp:v1:set-decision", "mcp:v1:invoke-tool", "mission:v1:promote", "mission:v1:host-ready"]);
     await handlers.get("mission:v1:list")!(event("file:///theia/index.html") as never);
     await handlers.get("mission:v1:get-snapshot")!(event("file:///theia/index.html") as never, { missionId: "mission-1" });
     await handlers.get("mission:v1:promote")!(event("file:///theia/index.html") as never, { intentId: "intent-1", missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" });
@@ -204,6 +204,8 @@ describe("Mission Control Theia Electron main contribution", () => {
     ["intelligence:v1:send-message", { intentId: "i", threadId: "__proto__", text: "hi" }],
     ["intelligence:v1:clear-thread", { intentId: "c", threadId: "__proto__" }],
     ["intelligence:v1:clear-thread", { threadId: "main" }],
+    ["intelligence:v1:turn-status", { threadId: "__proto__" }],
+    ["intelligence:v1:turn-status", { threadId: "main", extra: 1 }],
     ["mcp:v1:register-server", { intentId: "r", serverId: "__proto__", label: "L", transport: "stdio", command: "/usr/bin/x", args: [] }],
     ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "ftp", command: "/usr/bin/x", args: [] }],
     ["mcp:v1:register-server", { intentId: "r", serverId: "s", label: "L", transport: "stdio", command: "/usr/bin/x", args: [1] }],
@@ -225,7 +227,7 @@ describe("Mission Control Theia Electron main contribution", () => {
     const ipcMain = { removeHandler: vi.fn(), handle: (name: string, handler: (event: never, ...values: unknown[]) => unknown) => handlers.set(name, handler) };
     const host = {
       requestContext: () => ({ reviewAndPromote: vi.fn(), intakeRepository: vi.fn(), invokeMcpTool: vi.fn(), registerMcpServer: vi.fn(), setMcpToolDecision: vi.fn() }),
-      setIntelligenceSettings: vi.fn(), listIntelligenceMessages: vi.fn(), sendIntelligenceMessage: vi.fn(), clearIntelligenceThread: vi.fn(),
+      setIntelligenceSettings: vi.fn(), listIntelligenceMessages: vi.fn(), sendIntelligenceMessage: vi.fn(), clearIntelligenceThread: vi.fn(), getIntelligenceTurnStatus: vi.fn(),
       registerMcpServer: vi.fn(), removeMcpServer: vi.fn(), setMcpToolDecision: vi.fn(), invokeMcpTool: vi.fn(),
     };
     registerMissionControlHostIpc(ipcMain as never, host as never);

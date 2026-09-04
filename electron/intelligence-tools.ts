@@ -64,7 +64,7 @@ export interface RequestedToolCall {
  * Keeping the map means a declared name always resolves to the tool it was built from.
  */
 export class ToolCatalog {
-  private readonly targets = new Map<string, { serverId: string; name: string }>();
+  private readonly targets = new Map<string, { serverId: string; name: string; risk: McpToolRisk }>();
   readonly declarations: ReadonlyArray<ToolDeclaration>;
 
   constructor(tools: ReadonlyArray<DeclarableTool>) {
@@ -72,7 +72,9 @@ export class ToolCatalog {
     for (const tool of tools) {
       if (UNDECLARABLE_DECISIONS.has(tool.decision)) continue;
       const name = this.uniqueName(tool);
-      this.targets.set(name, { serverId: tool.serverId, name: tool.name });
+      // Risk is carried so a caller can report what is about to be confirmed without
+      // re-deriving it, and never has to fall back to a guess that understates it.
+      this.targets.set(name, { serverId: tool.serverId, name: tool.name, risk: tool.risk });
       declarations.push({
         name,
         // The risk is stated to the model so it can prefer a read over a destructive path,
@@ -87,7 +89,7 @@ export class ToolCatalog {
   get size(): number { return this.declarations.length; }
 
   /** Resolves a model-supplied name. Returns undefined for anything not declared this turn. */
-  resolve(name: unknown): { serverId: string; name: string } | undefined {
+  resolve(name: unknown): { serverId: string; name: string; risk: McpToolRisk } | undefined {
     return typeof name === "string" ? this.targets.get(name) : undefined;
   }
 

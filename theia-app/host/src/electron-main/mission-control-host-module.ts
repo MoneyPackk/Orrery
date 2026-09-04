@@ -51,6 +51,7 @@ export class MissionControlDaemonClient {
   listIntelligenceMessages(input: Parameters<HostService["listIntelligenceMessages"]>[0]): ReturnType<HostService["listIntelligenceMessages"]> { return this.daemon.listIntelligenceMessages(input); }
   sendIntelligenceMessage(input: Parameters<HostService["sendIntelligenceMessage"]>[0]): ReturnType<HostService["sendIntelligenceMessage"]> { return this.daemon.sendIntelligenceMessage(input); }
   clearIntelligenceThread(input: Parameters<HostService["clearIntelligenceThread"]>[0]): ReturnType<HostService["clearIntelligenceThread"]> { return this.daemon.clearIntelligenceThread(input); }
+  getIntelligenceTurnStatus(input: Parameters<HostService["getIntelligenceTurnStatus"]>[0]): ReturnType<HostService["getIntelligenceTurnStatus"]> { return this.daemon.getIntelligenceTurnStatus(input); }
 
   listMcpCatalog(): ReturnType<HostService["listMcpCatalog"]> { return this.daemon.listMcpCatalog(); }
   removeMcpServer(input: Parameters<HostService["removeMcpServer"]>[0]): ReturnType<HostService["removeMcpServer"]> { return this.daemon.removeMcpServer(input); }
@@ -197,6 +198,7 @@ export class MissionControlHostContribution implements ElectronMainApplicationCo
       listIntelligenceMessages: input => this.daemon.listIntelligenceMessages(input),
       sendIntelligenceMessage: input => this.daemon.sendIntelligenceMessageInWindow(input, this.requireTrustedWindow()),
       clearIntelligenceThread: input => this.daemon.clearIntelligenceThread(input),
+      getIntelligenceTurnStatus: input => this.daemon.getIntelligenceTurnStatus(input),
       reviewAndPromote: input => this.daemon.reviewAndPromote(input),
       listMcpCatalog: () => this.daemon.listMcpCatalog(),
       removeMcpServer: input => this.daemon.removeMcpServer(input),

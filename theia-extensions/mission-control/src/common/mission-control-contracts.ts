@@ -15,6 +15,7 @@ export const INTELLIGENCE_SET_SETTINGS_CHANNEL = "intelligence:v1:set-settings";
 export const INTELLIGENCE_LIST_MESSAGES_CHANNEL = "intelligence:v1:list-messages";
 export const INTELLIGENCE_SEND_MESSAGE_CHANNEL = "intelligence:v1:send-message";
 export const INTELLIGENCE_CLEAR_THREAD_CHANNEL = "intelligence:v1:clear-thread";
+export const INTELLIGENCE_TURN_STATUS_CHANNEL = "intelligence:v1:turn-status";
 export const MCP_LIST_CATALOG_CHANNEL = "mcp:v1:list-catalog";
 export const MCP_REGISTER_SERVER_CHANNEL = "mcp:v1:register-server";
 export const MCP_REMOVE_SERVER_CHANNEL = "mcp:v1:remove-server";
@@ -130,6 +131,24 @@ export interface IntelligenceSettingsInput {
   readonly model: string;
   readonly baseUrl: string;
   readonly apiKey: string;
+}
+
+/**
+ * What Orrery is doing right now in an in-flight turn.
+ *
+ * Read by the chat surface while a turn runs so a native confirmation is expected rather than
+ * unexplained: an unexplained modal trains click-through, which defeats the per-turn call budget.
+ * Status only, and it authorizes nothing.
+ */
+export interface IntelligenceTurnStatus {
+  readonly threadId: string;
+  readonly active: boolean;
+  /** The tool awaiting confirmation or running, when there is one. */
+  readonly pendingTool?: { readonly serverId: string; readonly name: string; readonly risk: string };
+  /** Calls already resolved in this turn, so progress is visible before the reply lands. */
+  readonly completed: ReadonlyArray<IntelligenceToolCall>;
+  /** Tool calls still available in this turn, so an unusually busy turn is visible. */
+  readonly remainingCalls: number;
 }
 
 /**
@@ -281,6 +300,7 @@ export interface MissionControlPublicApi {
   getIntelligenceSettings(): Promise<IntelligenceSettingsStatus>;
   setIntelligenceSettings(input: IntelligenceSettingsInput): Promise<IntelligenceSettingsStatus>;
   listIntelligenceMessages(input: IntelligenceThreadInput): Promise<IntelligenceTranscript>;
+  getIntelligenceTurnStatus(input: IntelligenceThreadInput): Promise<IntelligenceTurnStatus>;
   sendIntelligenceMessage(input: IntelligenceSendInput): Promise<IntelligenceSendResult>;
   clearIntelligenceThread(input: IntelligenceClearInput): Promise<IntelligenceTranscript>;
   listMcpCatalog(): Promise<McpCatalog>;

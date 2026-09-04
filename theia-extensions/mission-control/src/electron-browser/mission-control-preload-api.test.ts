@@ -14,7 +14,7 @@ describe("Theia Mission Control preload API", () => {
     const api = createMissionControlPreloadApi(call);
     expect(Object.keys(api)).toEqual([
       "intakeRepository", "create", "run", "cancel", "list", "getSnapshot", "inspect", "reviewAndPromote",
-      "getIntelligenceSettings", "setIntelligenceSettings", "listIntelligenceMessages", "sendIntelligenceMessage", "clearIntelligenceThread",
+      "getIntelligenceSettings", "setIntelligenceSettings", "listIntelligenceMessages", "sendIntelligenceMessage", "clearIntelligenceThread", "getIntelligenceTurnStatus",
       "listMcpCatalog", "registerMcpServer", "removeMcpServer", "setMcpToolDecision", "invokeMcpTool", "listMcpActivity",
     ]);
     expect(api).not.toHaveProperty("invoke");

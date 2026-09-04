@@ -1,5 +1,5 @@
 import { injectable } from "@theia/core/shared/inversify";
-import type { IntelligenceSettingsInput } from "../common/mission-control-contracts";
+import type { IntelligenceSettingsInput, IntelligenceTurnStatus } from "../common/mission-control-contracts";
 import type { DesktopMissionApi, OrreryIntelligenceService, OrreryIntelligenceState } from "../common/mission-control-types";
 
 const UNAVAILABLE = "Orrery Intelligence is unavailable in this window.";
@@ -28,6 +28,10 @@ export class OrreryIntelligenceDesktopAdapter implements OrreryIntelligenceServi
     const api = this.require();
     const transcript = await api.clearIntelligenceThread({ intentId: crypto.randomUUID(), threadId });
     return { threadId, messages: transcript.messages, settings: transcript.settings };
+  }
+
+  async turnStatus(threadId: string): Promise<IntelligenceTurnStatus> {
+    return this.require().getIntelligenceTurnStatus({ threadId });
   }
 
   async configure(input: Omit<IntelligenceSettingsInput, "intentId">): Promise<OrreryIntelligenceState> {

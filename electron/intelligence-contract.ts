@@ -20,6 +20,25 @@ export interface IntelligenceSettingsInput {
 }
 
 /**
+ * What Orrery is doing right now in an in-flight turn.
+ *
+ * A tool call raises a native confirmation, and a modal that appears with no in-app explanation
+ * trains people to click through it, which is exactly what the per-turn call budget exists to
+ * prevent. This is read by the chat surface while a turn runs so the modal is expected rather
+ * than unexplained. It is status only: nothing here authorizes anything.
+ */
+export interface IntelligenceTurnStatus {
+  readonly threadId: string;
+  readonly active: boolean;
+  /** The tool awaiting confirmation or running, when there is one. */
+  readonly pendingTool?: { readonly serverId: string; readonly name: string; readonly risk: string };
+  /** Calls already resolved in this turn, so progress is visible before the reply lands. */
+  readonly completed: ReadonlyArray<IntelligenceToolCall>;
+  /** Tool calls still available in this turn, so an unusually busy turn is visible. */
+  readonly remainingCalls: number;
+}
+
+/**
  * One tool the model requested during a turn, recorded as data rather than prose.
  *
  * These live beside the assistant's text, never inside it, so the interface can render them

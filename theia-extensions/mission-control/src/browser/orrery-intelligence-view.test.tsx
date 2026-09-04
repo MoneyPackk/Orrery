@@ -134,6 +134,40 @@ describe("OrreryIntelligenceView", () => {
     expect(screen.queryByRole("region", { name: "Tools Orrery ran for this answer" })).not.toBeInTheDocument();
   });
 
+  it("names the tool awaiting confirmation, so the native modal is not a surprise", () => {
+    render(<OrreryIntelligenceView state={{
+      ...configured,
+      sending: true,
+      turn: { threadId: "main", active: true, completed: [], remainingCalls: 4, pendingTool: { serverId: "files", name: "purge", risk: "destructive" } },
+    }} {...actions()} />);
+    const pending = screen.getByText(/Waiting for you to confirm/);
+    expect(pending).toBeInTheDocument();
+    expect(screen.getByText("files/purge")).toBeInTheDocument();
+    // Risk is shown, because confirming a destructive call is not the same decision as a read.
+    expect(screen.getByText("destructive")).toBeInTheDocument();
+  });
+
+  it("falls back to a general warning when no tool is pending yet", () => {
+    render(<OrreryIntelligenceView state={{ ...configured, sending: true }} {...actions()} />);
+    expect(screen.getByText(/ask you to confirm/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for you to confirm/)).not.toBeInTheDocument();
+  });
+
+  it("shows how much of the tool budget this turn has used", () => {
+    render(<OrreryIntelligenceView state={{
+      ...configured,
+      sending: true,
+      turn: { threadId: "main", active: true, completed: [{ serverId: "files", name: "read", outcome: "ran" }], remainingCalls: 4 },
+    }} {...actions()} />);
+    expect(screen.getByText(/1 of 5 tool calls used/)).toBeInTheDocument();
+  });
+
+  it("shows no live turn detail once sending ends", () => {
+    render(<OrreryIntelligenceView state={configured} {...actions()} />);
+    expect(screen.queryByText(/Waiting for you to confirm/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/tool calls used/)).not.toBeInTheDocument();
+  });
+
   it("clears the conversation and disables clear when empty", async () => {
     const handlers = actions();
     render(<OrreryIntelligenceView state={configured} {...handlers} />);

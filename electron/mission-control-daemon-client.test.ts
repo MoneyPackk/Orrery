@@ -899,6 +899,60 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     expect(result.reply.text).not.toContain("Orrery ran these tools");
   });
 
+  it("reports the tool being confirmed while the turn is still running", async () => {
+    // Captured from inside the confirmation, which is exactly when the native modal is on
+    // screen: this is the moment the surface must be able to explain what is being asked.
+    const seen: unknown[] = [];
+    const { adapter } = await harness({
+      bodies: [toolUse(), answer("done")],
+      confirm: async () => {
+        seen.push(await adapter.getIntelligenceTurnStatus({ threadId: "main" }));
+        return true;
+      },
+    });
+    await adapter.sendIntelligenceMessage({ intentId: "i-status", threadId: "main", text: "read it" }, parent);
+    expect(seen[0]).toMatchObject({
+      threadId: "main",
+      active: true,
+      pendingTool: { serverId: "files", name: "read_file", risk: "read" },
+    });
+  });
+
+  it("reports an idle thread rather than stale state once the turn ends", async () => {
+    const { adapter } = await harness({ bodies: [toolUse(), answer("done")] });
+    await adapter.sendIntelligenceMessage({ intentId: "i-idle", threadId: "main", text: "read it" }, parent);
+    expect(await adapter.getIntelligenceTurnStatus({ threadId: "main" })).toEqual({
+      threadId: "main",
+      active: false,
+      completed: [],
+      remainingCalls: MAX_TOOL_CALLS_PER_TURN,
+    });
+  });
+
+  it("does not leave a failed turn reporting work forever", async () => {
+    // A turn that throws must clear its status, or the surface cannot tell a crash from a
+    // tool call that is simply taking a long time.
+    const { adapter } = await harness({ bodies: [toolUse(), answer("")] });
+    await expect(adapter.sendIntelligenceMessage({ intentId: "i-fail", threadId: "main", text: "read it" }, parent)).rejects.toThrow();
+    expect((await adapter.getIntelligenceTurnStatus({ threadId: "main" })).active).toBe(false);
+  });
+
+  it("shows progress and a shrinking budget as calls resolve", async () => {
+    const seen: Array<{ completed: number; remaining: number }> = [];
+    const { adapter } = await harness({
+      bodies: [toolUse()],
+      confirm: async () => {
+        const status = await adapter.getIntelligenceTurnStatus({ threadId: "main" });
+        seen.push({ completed: status.completed.length, remaining: status.remainingCalls });
+        return true;
+      },
+    });
+    await adapter.sendIntelligenceMessage({ intentId: "i-progress", threadId: "main", text: "loop" }, parent);
+    // Earlier calls are visible before the reply lands, and the budget visibly runs down.
+    expect(seen.map(entry => entry.completed)).toEqual([0, 1, 2, 3, 4]);
+    expect(seen.map(entry => entry.remaining)).toEqual([4, 3, 2, 1, 0]);
+  });
+
   it("bounds tool calls per turn so a loop cannot fatigue the operator", async () => {
     // The model asks for a tool every time; only the budget can stop it.
     const { adapter, confirmToolCall, callMcpTool } = await harness({ bodies: [toolUse()] });

@@ -99,9 +99,19 @@ export function OrreryIntelligenceView({ state, onSend, onClear, onConfigure }: 
     {!busy && state.messages.length === 0 && state.settings.configured && <p className="orrery-intelligence__empty">
       Ask about this repository, a mission plan, or a failure. Orrery Intelligence can explain, plan, and draft. It cannot edit files, run commands, or promote changes.
     </p>}
-    {state.sending && <p aria-live="polite" className="orrery-intelligence__pending">
-      Working. If Orrery needs a tool, it will ask you to confirm before anything runs.
-    </p>}
+    {state.sending && <div className="orrery-intelligence__pending" aria-live="polite">
+      {state.turn?.pendingTool
+        ? <>
+          <span>Waiting for you to confirm <code>{state.turn.pendingTool.serverId}/{state.turn.pendingTool.name}</code></span>
+          <span className={`orrery-intelligence__pending-risk orrery-intelligence__pending-risk--${state.turn.pendingTool.risk}`}>
+            {state.turn.pendingTool.risk}
+          </span>
+        </>
+        : <span>Working. If Orrery needs a tool, it will ask you to confirm before anything runs.</span>}
+      {state.turn && state.turn.completed.length > 0 && <span className="orrery-intelligence__pending-progress">
+        {state.turn.completed.length} of {state.turn.completed.length + state.turn.remainingCalls} tool calls used
+      </span>}
+    </div>}
 
     <form className="orrery-intelligence__composer" aria-label="Send message" onSubmit={event => {
       event.preventDefault();
