@@ -34,7 +34,11 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("daemon lifecycle", () => {
+/**
+ * Real lock, endpoint, and token files, so every case waits on the filesystem. Fast alone but
+ * slow when the rest of the suite competes for disk; scoped budget rather than a global raise.
+ */
+describe("daemon lifecycle", { timeout: 30_000 }, () => {
   it("creates a private per-user runtime directory", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-lifecycle-"));
     directories.push(parent);

@@ -148,7 +148,15 @@ describe("FilePromotionRetryRepository locking", () => {
   });
 });
 
-describe("GitWorkspaceService", () => {
+/**
+ * These tests drive a real `git` binary, so a single case runs many child processes and takes
+ * seconds even on an idle machine: measured 4-6s each in isolation against Vitest's 5s default.
+ * The default was therefore failing correct code, which trains everyone to dismiss red as
+ * "flaky" and hides real regressions. The budget below reflects the measured cost with headroom
+ * for a loaded machine; it is scoped to this file rather than raised globally so that a fast
+ * unit test elsewhere still fails when it becomes slow.
+ */
+describe("GitWorkspaceService", { timeout: 60_000 }, () => {
   it("creates a separate mission worktree at the target HEAD", async () => {
     const repositoryRoot = await createRepository();
     const runtimeParent = await mkdtemp(join(tmpdir(), "orrery-private-runtime-parent-"));

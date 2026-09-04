@@ -8,7 +8,12 @@ import { createMission, transitionMission } from "../packages/mission-control-do
 import { FileMissionStore, type GitInspector, type MissionSnapshot } from "../packages/mission-control-daemon/src/index";
 import { createDaemonAuthority } from "./daemon-authority-bootstrap";
 
-describe("daemon authority bootstrap", () => {
+/**
+ * Bootstraps a real daemon process per case. Measured 1-10s in isolation against Vitest's 5s
+ * default, so correct code was failing under load. Scoped to this file, with headroom, rather
+ * than raised globally: a fast test elsewhere should still fail when it becomes slow.
+ */
+describe("daemon authority bootstrap", { timeout: 60_000 }, () => {
   it("starts a cancellable run through the real authority bootstrap", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-run-cancel-"));
     const repositoryRoot = join(parent, "repository");
@@ -44,7 +49,7 @@ describe("daemon authority bootstrap", () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  }, 15_000);
+  });
 
   it("creates private durable state and an empty authority", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-bootstrap-"));
@@ -267,15 +272,24 @@ async function git(args: string[], cwd: string) {
   return execFileAsync("git", args, { cwd });
 }
 
+/**
+ * Waits for the daemon to durably record an active run.
+ *
+ * The deadline is wall-clock, so it is not a test-framework timeout and cannot be relaxed by
+ * raising one: it measures how long a real daemon took to persist state. The budget is scaled by
+ * ORRERY_TEST_TIMEOUT_SCALE so a loaded or slow machine does not report a readiness delay as a
+ * correctness failure, which is what previously made this file look flaky.
+ */
 async function waitForActiveRun(store: FileMissionStore, missionId: string, run: Promise<unknown>): Promise<string> {
-  const timeout = Date.now() + 10_000;
+  const budgetMs = 10_000 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1);
+  const timeout = Date.now() + budgetMs;
   while (Date.now() < timeout) {
     const mission = await store.load(missionId);
     if (mission?.activeRunId) return mission.activeRunId;
     const outcome = await Promise.race([run.then(() => "resolved", () => "rejected"), new Promise<"pending">((resolvePending) => setTimeout(() => resolvePending("pending"), 25))]);
     if (outcome !== "pending") await run;
   }
-  throw new Error("Run did not expose a durable activeRunId.");
+  throw new Error(`Run did not expose a durable activeRunId within ${budgetMs}ms.`);
 }
 
 function activeMission(): MissionSnapshot {

@@ -13,9 +13,20 @@ function npm(args: ReadonlyArray<string>, cwd: string): void {
   execFileSync(process.execPath, [npmCli, ...args], { cwd, stdio: "pipe" });
 }
 
+/**
+ * Runs two real `npm` installs and a `npm pack` against the filesystem: measured ~42s in
+ * isolation, and slower when the rest of the suite is competing for disk. The generous budget
+ * is scoped to this one case because it is genuinely expensive, not because it is unreliable.
+ */
 describe("published extension package", () => {
   afterAll(() => temporaryRoots.forEach((path) => rmSync(path, { recursive: true, force: true })));
 
+  /*
+   * Runs two real `npm` installs and a `npm pack` against the filesystem: measured ~42s alone
+   * and well over two minutes when the rest of the suite competes for disk. The budget is set on
+   * this single case, not globally, because it is genuinely expensive rather than unreliable, and
+   * every other test in this package should still fail fast when it becomes slow.
+   */
   it("installs from its tarball in an unrelated consumer without repository paths", () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), "orrery-theia-pack-"));
     temporaryRoots.push(temporaryRoot);
@@ -59,5 +70,5 @@ describe("published extension package", () => {
       `if (Object.keys(exposedApi).join(",") !== "intakeRepository,create,run,cancel,list,getSnapshot,inspect,reviewAndPromote,getIntelligenceSettings,setIntelligenceSettings,listIntelligenceMessages,sendIntelligenceMessage,clearIntelligenceThread,listMcpCatalog,registerMcpServer,removeMcpServer,setMcpToolDecision,invokeMcpTool,listMcpActivity") throw new Error("Installed preload exposed an unexpected API")`,
     ].join(";");
     execFileSync(process.execPath, ["-e", resolutionScript], { cwd: consumer, stdio: "pipe" });
-  }, 120_000);
+  }, 600_000);
 });

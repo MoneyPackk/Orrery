@@ -82,7 +82,11 @@ function event(missionId: string, sequence: number): MissionEventRecord {
   };
 }
 
-describe("filesystem mission persistence", () => {
+/**
+ * Exercises real filesystem journaling and fsync, which is slow under parallel disk load even
+ * though each case is fast in isolation. Scoped budget for the same reason as the Git suite.
+ */
+describe("filesystem mission persistence", { timeout: 30_000 }, () => {
   it("creates, loads, and lists snapshots without retaining mutable references", async () => {
     const directory = await stateDirectory();
     const store = new FileMissionStore(directory);

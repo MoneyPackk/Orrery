@@ -10,7 +10,9 @@ import { createDaemonAuthority } from "./daemon-authority-bootstrap";
 import { digestReviewContent } from "../packages/mission-control-daemon/src/review-content";
 
 const execFileAsync = promisify(execFile);
-const longVerificationCommand = { executable: process.execPath, args: ["-e", "setTimeout(() => {}, 30_000)"] };
+/** How long the "long" verification runs. The abort proof must complete well inside this. */
+const LONG_VERIFICATION_MS = 30_000;
+const longVerificationCommand = { executable: process.execPath, args: ["-e", `setTimeout(() => {}, ${LONG_VERIFICATION_MS})`] };
 const quickVerificationCommand = { executable: process.execPath, args: ["-e", "process.exit(0)"] };
 
 export interface AuthoritativeDaemonSmokeResult {
@@ -97,7 +99,17 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
       runId: activeRunId,
     }, repositoryPath));
     const cancellationEvents = await replayUntil(canceller, cancelledMission.id, cancellationCursor, (event) => event.kind === "cancellation" && event.runId === activeRunId);
-    const processAborted = await runOutcome === "aborted" && Date.now() - runStartedAt < 20_000 && cancellationEvents.some((event) => event.kind === "cancellation" && event.runId === activeRunId);
+    /*
+     * The elapsed bound is what distinguishes a real abort from merely waiting for the long
+     * verification to exit on its own, so it must stay strictly below that command's duration or
+     * it proves nothing. It is therefore clamped rather than scaled freely: a loaded machine gets
+     * headroom, but never enough to let a natural exit pass as a cancellation.
+     */
+    const abortBudgetMs = Math.min(
+      20_000 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1),
+      LONG_VERIFICATION_MS - 3_000,
+    );
+    const processAborted = await runOutcome === "aborted" && Date.now() - runStartedAt < abortBudgetMs && cancellationEvents.some((event) => event.kind === "cancellation" && event.runId === activeRunId);
     await canceller.disconnect();
     clients.delete(canceller);
 
@@ -287,10 +299,20 @@ function assert(condition: unknown, message: string): asserts condition { if (!c
 async function revision(cwd: string) { return (await git(["rev-parse", "HEAD"], cwd)).stdout.trim(); }
 async function status(cwd: string) { return (await git(["status", "--porcelain=v1", "--untracked-files=all", "--", ".", ":!.orrery/"], cwd)).stdout; }
 async function git(args: string[], cwd: string) { return execFileAsync("git", args, { cwd }); }
+/**
+ * Bounds a readiness wait.
+ *
+ * These deadlines measure how long a real daemon took to become ready, so they are wall-clock
+ * and unaffected by any test-framework timeout. ORRERY_TEST_TIMEOUT_SCALE stretches them on a
+ * loaded or slow machine so a readiness delay is not reported as a correctness failure. The
+ * scale never shrinks the budget, and the message states the budget actually used.
+ */
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  const scale = Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1);
+  const budget = Math.round(milliseconds * scale);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); })]);
+    return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${message} (waited ${budget}ms)`)), budget); })]);
   } finally {
     if (timer) clearTimeout(timer);
   }
