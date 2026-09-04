@@ -11,7 +11,8 @@ const state = (overrides: Partial<OrreryToolsState> = {}): OrreryToolsState => (
 
 function widgetWith(service: Partial<OrreryToolsService>): { widget: OrreryToolsWidget; read: () => OrreryToolsState } {
   class TestWidget extends OrreryToolsWidget {
-    protected override update(): void {}
+    // `update` is public on the Theia base widget, so the stub must not narrow its visibility.
+    override update(): void {}
     snapshot(): OrreryToolsState { return this.state; }
   }
   const widget = new TestWidget();

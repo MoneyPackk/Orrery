@@ -13,7 +13,7 @@
     "build:host": "node scripts/build-host.mjs",
     "build:full": "npm run build:host && node scripts/application-manager.mjs build --mode=development",
     "generate": "node scripts/generate-application.mjs",
-    "typecheck": "tsc -p host/tsconfig.json --noEmit",
+    "typecheck": "tsc -p host/tsconfig.json --noEmit && tsc -p tsconfig.test.json --pretty false",
     "test": "npm run generate && vitest run",
     "smoke": "node scripts/smoke.mjs",
     "start": "node scripts/application-manager.mjs start"

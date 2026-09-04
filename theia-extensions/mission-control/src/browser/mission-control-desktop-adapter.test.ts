@@ -16,7 +16,7 @@ describe("MissionControlDesktopAdapter", () => {
 
   it("loads list items and the selected public mission through the desktop mission API", async () => {
     const api = { list: vi.fn(async () => [{ id: "mission-1", title: "Workbench tracer", status: "ready_for_review" as const, updatedAt: "2026-08-29T11:00:00.000Z" }]), getSnapshot: vi.fn(async () => mission()) };
-    window.orreryMissionControl = api as never;
+    (window as { orreryMissionControl?: unknown }).orreryMissionControl = api as never;
     const adapter = new MissionControlDesktopAdapter();
     await expect(adapter.load()).resolves.toMatchObject({ selectedId: "mission-1", selected: { id: "mission-1" } });
     expect(api.getSnapshot).toHaveBeenCalledWith({ missionId: "mission-1" });
@@ -29,7 +29,7 @@ describe("MissionControlDesktopAdapter", () => {
   it("sends review intent through reviewAndPromote and reloads the selected mission", async () => {
     const snapshot = mission();
     const api = { list: vi.fn(async () => []), getSnapshot: vi.fn(async () => snapshot), reviewAndPromote: vi.fn(async () => ({ mission: { ...snapshot, status: "accepted" } })) };
-    window.orreryMissionControl = api as never;
+    (window as { orreryMissionControl?: unknown }).orreryMissionControl = api as never;
     const adapter = new MissionControlDesktopAdapter();
     await expect(adapter.review(snapshot, "accepted")).resolves.toMatchObject({ status: "accepted" });
     expect(api.reviewAndPromote).toHaveBeenCalledWith(expect.objectContaining({ missionId: "mission-1", planRevisionId: "plan-1", decision: "accepted" }));
@@ -39,7 +39,7 @@ describe("MissionControlDesktopAdapter", () => {
     const snapshot = mission();
     const repository = { repositoryId: "repository-1", canonicalRoot: "C:/repo", fingerprint: "a".repeat(64) };
     const api = { list: vi.fn(async () => []), getSnapshot: vi.fn(async () => snapshot), intakeRepository: vi.fn(async () => repository), create: vi.fn(async () => snapshot) };
-    window.orreryMissionControl = api as never;
+    (window as { orreryMissionControl?: unknown }).orreryMissionControl = api as never;
     const adapter = new MissionControlDesktopAdapter();
     await expect(adapter.intakeRepository({ intentId: "intent-1", localPath: "C:/repo" })).resolves.toMatchObject({ repository });
     await expect(adapter.create({ intentId: "intent-2", repositoryId: repository.repositoryId, title: "Title", goal: "Goal", mode: "build", plan: { scope: "Scope", actions: ["Act"], acceptanceCriteria: ["Pass"] } })).resolves.toMatchObject({ repository });

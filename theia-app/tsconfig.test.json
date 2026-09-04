@@ -1,0 +1,30 @@
+{
+  // Typechecks the tests, which `host/tsconfig.json` does not cover.
+  //
+  // That config exists to build `host/src` into `lib/`, so it includes only sources. The result
+  // was that every file under `test/` went unchecked, letting a test drift from the interface it
+  // exercises without anything failing. This config emits nothing and only checks.
+  //
+  // Vitest runs these as ES modules, so `import.meta` and JSON imports are legal here even
+  // though the host library itself is CommonJS.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "resolveJsonModule": true,
+    // The smoke helpers are plain `.mjs` with no declarations. Allowing implicit `any` for them
+    // keeps the tests checkable without pretending those modules are typed; everything written
+    // in TypeScript is still checked strictly.
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["test/**/*.ts", "host/src/**/*.ts"]
+}

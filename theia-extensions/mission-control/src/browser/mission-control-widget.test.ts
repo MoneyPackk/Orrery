@@ -12,7 +12,8 @@ const mission = (id: string, status: Mission["status"] = "ready_for_review"): Mi
 class TestWidget extends MissionControlWidget {
   constructor(service: MissionControlService, state: MissionControlState) { super(); Object.defineProperty(this, "service", { value: service }); this.state = state; }
   snapshot(): MissionControlState { return this.state; }
-  protected override update(): void {}
+  // `update` is public on the Theia base widget, so the stub must not narrow its visibility.
+    override update(): void {}
 }
 
 describe("MissionControlWidget request ordering", () => {
