@@ -1,6 +1,6 @@
 import { inject, injectable, optional } from "@theia/core/shared/inversify";
 import type { ElectronMainApplication, ElectronMainApplicationContribution } from "@theia/core/lib/electron-main/electron-main-application";
-import { app, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
+import { app, BrowserWindow, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
 import {
   MissionControlHostService,
   MISSION_INTAKE_REPOSITORY_CHANNEL, MISSION_CREATE_CHANNEL, MISSION_RUN_CHANNEL, MISSION_CANCEL_CHANNEL, MISSION_INSPECT_CHANNEL,
@@ -16,6 +16,15 @@ import {
   type IntelligenceSettingsInput, type IntelligenceThreadInput, type IntelligenceSendInput, type IntelligenceClearInput, type IntelligenceProviderKind,
   type McpRegisterInput, type McpRemoveServerInput, type McpSetDecisionInput, type McpInvokeInput, type McpInvokeResult, type McpCatalog, type McpTransportKind, type McpToolDecision,
 } from "../common/mission-control-contracts";
+import { describeSmokeProbe, runSmokeRenderProbe, smokeProbePassed } from "./mission-control-smoke-probe";
+
+/**
+ * Printed only after every Mission Control view has rendered in the real renderer.
+ *
+ * The smoke waits for this rather than for preload readiness, so a passing smoke now means the
+ * widgets actually appeared instead of merely that the preload script ran.
+ */
+export const SMOKE_RENDER_MARKER = "ORRERY_THEIA_RENDERED";
 
 export interface MissionControlHostRequestContext {
   intakeRepository(input: RepositoryIntakeInput): Promise<import("../common/mission-control-contracts").RepositoryIntakeResult>;
@@ -271,8 +280,30 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
       if (values.length !== 0) throw new Error("Invalid mission IPC payload");
       await host.list();
       if (process.env.ORRERY_THEIA_SMOKE === "1") {
-        console.log("ORRERY_THEIA_READY");
-        setTimeout(() => app.quit(), 50);
+        // This channel fires from the preload, before the Theia frontend has started, so it
+        // proves only that the trusted preload ran. Quitting here would mean the smoke never
+        // rendered a single widget. Instead, drive the real views and check the real DOM.
+        const sender = event.sender;
+        // Theia finishes startup inside an animation frame, and Chromium neither schedules frames
+        // nor routes input for a window that is hidden or throttled: the frontend otherwise stops
+        // at 'started_contributions' forever and no widget can render.
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window.webContents !== sender) continue;
+          window.webContents.setBackgroundThrottling(false);
+          if (window.isMinimized()) window.restore();
+          window.show();
+          window.focus();
+          window.moveTop();
+          window.webContents.focus();
+        }
+        void runSmokeRenderProbe(sender).then(outcome => {
+          console.log(describeSmokeProbe(outcome));
+          if (smokeProbePassed(outcome)) console.log(SMOKE_RENDER_MARKER);
+          setTimeout(() => app.quit(), 50);
+        }).catch(error => {
+          console.log(`FAIL smoke render probe: ${error instanceof Error ? error.message : "unknown failure"}`);
+          setTimeout(() => app.quit(), 50);
+        });
       }
     }],
   ] as const;

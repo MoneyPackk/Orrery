@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process";
 
-export const THEIA_READY_MARKER = "ORRERY_THEIA_READY";
+/**
+ * Emitted only after every Mission Control view rendered in the real renderer.
+ *
+ * This replaced a preload-time marker. The preload runs before the Theia frontend starts, so the
+ * old signal proved the trusted preload had loaded and nothing about whether any widget appeared.
+ */
+export const THEIA_READY_MARKER = "ORRERY_THEIA_RENDERED";
 
 export function waitForTheiaReadiness(child, timeoutMs) {
   return new Promise((resolve, reject) => {

@@ -39,12 +39,15 @@ if (full.status === 0) {
     stdio: ["ignore", "pipe", "pipe"]
   });
   try {
-    await waitForTheiaReadiness(launch, 15_000);
-    await waitForTheiaExit(launch, 15_000);
+    // Readiness now means "every view rendered", which requires the whole Theia frontend to
+    // start and three widgets to mount, not just the preload script. That is a genuinely longer
+    // wait than the old preload-time signal, so the budget reflects real frontend startup.
+    await waitForTheiaReadiness(launch, 120_000);
+    await waitForTheiaExit(launch, 30_000);
     terminateProcessTree(launch.pid);
     removeSmokeUserData(userData);
     removeSmokeUserData(localAppData);
-    console.log("Theia smoke passed: full build completed and the trusted renderer confirmed host readiness.");
+    console.log("Theia smoke passed: full build completed and every Mission Control view rendered in the real renderer.");
     process.exit(0);
   } catch (error) {
     terminateProcessTree(launch.pid);

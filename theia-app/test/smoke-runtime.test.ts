@@ -18,8 +18,8 @@ describe("Theia smoke runtime readiness", () => {
   it("succeeds only after the explicit host readiness marker", async () => {
     const child = fakeChild();
     const pending = waitForTheiaReadiness(child as never, 100);
-    child.stdout.emit("data", "booting\nORRERY_THEIA_READY\n");
-    await expect(pending).resolves.toContain("ORRERY_THEIA_READY");
+    child.stdout.emit("data", "booting\nORRERY_THEIA_RENDERED\n");
+    await expect(pending).resolves.toContain("ORRERY_THEIA_RENDERED");
   });
 
   it("does not accept a readiness marker split by unrelated output", async () => {
