@@ -35,7 +35,7 @@ if (full.status === 0) {
   const launch = spawn(electronExecutable, [root, `--electronUserData=${userData}`], {
     cwd: root,
     detached: process.platform !== "win32",
-    env: { ...process.env, LOCALAPPDATA: localAppData, ORRERY_THEIA_SMOKE: "1", ORRERY_THEIA_SMOKE_USER_DATA: userData },
+    env: { ...process.env, LOCALAPPDATA: localAppData, ORRERY_THEIA_SMOKE: "1", ORRERY_THEIA_SMOKE_USER_DATA: userData, ORRERY_TEST_TIMEOUT_SCALE: process.env.ORRERY_TEST_TIMEOUT_SCALE ?? "4" },
     stdio: ["ignore", "pipe", "pipe"]
   });
   try {

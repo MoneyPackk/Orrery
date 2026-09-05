@@ -26,7 +26,11 @@ export interface RuntimeDirectoryOptions {
 }
 
 const DEFAULT_RUNTIME = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Orrery", "runtime");
-const DEFAULT_READY_ATTEMPTS = 50;
+// 50 x 100ms = a 5s readiness budget. That is right for a warm production start, but a managed
+// vite-node daemon cold-starting on a loaded machine has measured near 10s, which reported as a
+// startup flake in the smoke and the test suite. ORRERY_TEST_TIMEOUT_SCALE stretches the attempt
+// count where it is set; production never sets it.
+const DEFAULT_READY_ATTEMPTS = 50 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1);
 const DEFAULT_READY_DELAY_MS = 100;
 
 export function endpointPaths(runtimeDirectory: string): { endpointPath: string; tokenPath: string; lockPath: string } {

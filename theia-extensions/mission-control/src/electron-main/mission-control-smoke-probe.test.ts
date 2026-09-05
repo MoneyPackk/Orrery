@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   SHELL_READY_SCRIPT,
   SMOKE_PROBE_VIEWS,
+  SMOKE_PROBE_KEYBINDINGS,
   buildRegionProbeScript,
   describeSmokeProbe,
+  findMissingKeybindings,
   runSmokeRenderProbe,
   smokeProbePassed,
   type SmokeProbeTarget,
@@ -114,5 +116,25 @@ describe("mission control smoke render probe", () => {
   it("covers every view the extension contributes", () => {
     expect(SMOKE_PROBE_VIEWS.map(view => view.key)).toEqual(["M", "I", "T"]);
     expect(new Set(SMOKE_PROBE_VIEWS.map(view => view.region)).size).toBe(SMOKE_PROBE_VIEWS.length);
+  });
+
+  it("reports a view whose keybinding never registered", () => {
+    const registered = Object.fromEntries(SMOKE_PROBE_KEYBINDINGS.map(item => [item.commandId, [item.keybinding]]));
+    // One command's binding is absent, as happens when a contribution's registerKeybindings
+    // silently fails: the command exists but no keystroke reaches it.
+    delete registered["orrery.intelligence.open"];
+    const missing = findMissingKeybindings(registered, SMOKE_PROBE_KEYBINDINGS);
+    expect(missing).toEqual(["orrery.intelligence.open is not bound to ctrlcmd+shift+i"]);
+  });
+
+  it("accepts every documented keybinding when all are registered", () => {
+    const registered = Object.fromEntries(SMOKE_PROBE_KEYBINDINGS.map(item => [item.commandId, [item.keybinding]]));
+    expect(findMissingKeybindings(registered, SMOKE_PROBE_KEYBINDINGS)).toEqual([]);
+  });
+
+  it("fails every view when the registry itself is unreadable", () => {
+    const missing = findMissingKeybindings(null, SMOKE_PROBE_KEYBINDINGS);
+    expect(missing).toHaveLength(SMOKE_PROBE_KEYBINDINGS.length);
+    expect(missing[0]).toContain("registry unavailable");
   });
 });

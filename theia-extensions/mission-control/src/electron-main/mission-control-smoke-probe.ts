@@ -27,6 +27,17 @@ export const SMOKE_PROBE_VIEWS = [
   { widgetId: "orrery-tools", key: "T", region: "Orrery Tools" },
 ] as const;
 
+/**
+ * Each view's toggle command and the keybinding its contribution registers. Kept beside the
+ * view list so the smoke asserts exactly what the contributions declare, rather than deriving
+ * command ids from widget ids.
+ */
+export const SMOKE_PROBE_KEYBINDINGS = [
+  { commandId: "orrery.missionControl.open", keybinding: "ctrlcmd+shift+m" },
+  { commandId: "orrery.intelligence.open", keybinding: "ctrlcmd+shift+i" },
+  { commandId: "orrery.tools.open", keybinding: "ctrlcmd+shift+t" },
+] as const;
+
 export interface SmokeProbeView { readonly widgetId: string; readonly region: string; readonly found: boolean }
 export interface SmokeProbeOutcome {
   readonly views: ReadonlyArray<SmokeProbeView>;
@@ -120,6 +131,23 @@ export const MENUBAR_TITLES_SCRIPT = `(() => {
   const viewItems = [...document.querySelectorAll('.lm-Menu-itemLabel')].map(n => n.textContent ?? '');
   return JSON.stringify({ titles, viewItems });
 })()`;
+
+/**
+ * Checks each view's toggle command has a registered keybinding.
+ *
+ * A command can be registered and menu-reachable while no keystroke invokes it, which leaves the
+ * shortcut dead even though every other signal looks healthy. Theia's keybinding registry is the
+ * renderer-side truth for what a keystroke would actually reach.
+ */
+export function findMissingKeybindings(
+  registered: Record<string, string[]> | null,
+  expected: ReadonlyArray<{ commandId: string; keybinding: string }>,
+): string[] {
+  if (!registered) return expected.map(item => `keybinding registry unavailable for ${item.commandId}`);
+  return expected
+    .filter(item => !(registered[item.commandId] ?? []).some(binding => binding === item.keybinding))
+    .map(item => `${item.commandId} is not bound to ${item.keybinding}`);
+}
 export function describeSmokeProbe(outcome: SmokeProbeOutcome): string {
   const lines = outcome.views.map(view => view.found
     ? `ok   ${view.widgetId}: rendered "${view.region}"`

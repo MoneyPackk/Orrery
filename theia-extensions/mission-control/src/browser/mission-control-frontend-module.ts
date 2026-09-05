@@ -6,6 +6,8 @@ import { QuickInputService } from "@theia/core/lib/browser/quick-input/quick-inp
 import { DefaultsPreferenceProvider } from "@theia/core/lib/common/preferences/defaults-preference-provider";
 import { MenuModelRegistry } from "@theia/core/lib/common/menu";
 import { CommonMenus } from "@theia/core/lib/browser/common-menus";
+import { KeybindingRegistry } from "@theia/core/lib/browser/keybinding";
+import { MissionControlCommands, OrreryIntelligenceCommands, OrreryToolsCommands } from "../common/mission-control-commands";
 import { PreferenceProvider } from "@theia/core/lib/common/preferences/preference-provider";
 import { PreferenceScope } from "@theia/core/lib/common/preferences/preference-scope";
 import { bindViewContribution } from "@theia/core/lib/browser/shell/view-contribution";
@@ -122,6 +124,20 @@ export default new ContainerModule((bind) => {
         (window as unknown as { __orreryViewModelLabels?: string[] }).__orreryViewModelLabels = labels;
       } catch {
         (window as unknown as { __orreryViewModelLabels?: string[] }).__orreryViewModelLabels = [];
+      }
+      // Reports each view's registered keybindings from Theia's own registry. Registration is
+      // what makes a shortcut reachable at all; without it the command exists but no keystroke
+      // can invoke it, which is the difference between "registered" and "usable" that the menu
+      // model cannot show. Stashed like the menu labels so the smoke reads it directly.
+      try {
+        const keybindings = container.get(KeybindingRegistry);
+        const registry: Record<string, string[]> = {};
+        for (const commandId of [MissionControlCommands.OPEN.id, OrreryIntelligenceCommands.OPEN.id, OrreryToolsCommands.OPEN.id]) {
+          registry[commandId] = keybindings.getKeybindingsForCommand(commandId).map(binding => binding.keybinding);
+        }
+        (window as unknown as { __orreryKeybindings?: Record<string, string[]> }).__orreryKeybindings = registry;
+      } catch {
+        (window as unknown as { __orreryKeybindings?: Record<string, string[]> }).__orreryKeybindings = {};
       }
       for (const contribution of [MissionControlContribution, OrreryIntelligenceContribution, OrreryToolsContribution]) {
         try {

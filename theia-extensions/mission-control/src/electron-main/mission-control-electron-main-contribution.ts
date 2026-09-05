@@ -16,7 +16,7 @@ import {
   type IntelligenceSettingsInput, type IntelligenceThreadInput, type IntelligenceSendInput, type IntelligenceClearInput, type IntelligenceProviderKind,
   type McpRegisterInput, type McpRemoveServerInput, type McpSetDecisionInput, type McpInvokeInput, type McpInvokeResult, type McpCatalog, type McpTransportKind, type McpToolDecision,
 } from "../common/mission-control-contracts";
-import { describeSmokeProbe, findMissingMenuLabels, runSmokeRenderProbe, smokeProbePassed, SMOKE_PROBE_VIEWS, MENUBAR_TITLES_SCRIPT } from "./mission-control-smoke-probe";
+import { describeSmokeProbe, findMissingKeybindings, findMissingMenuLabels, runSmokeRenderProbe, smokeProbePassed, SMOKE_PROBE_VIEWS, SMOKE_PROBE_KEYBINDINGS, MENUBAR_TITLES_SCRIPT } from "./mission-control-smoke-probe";
 
 /**
  * Printed only after every Mission Control view has rendered in the real renderer.
@@ -324,7 +324,16 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
             if (missing.length > 0) await new Promise(resolve => setTimeout(resolve, 500));
           }
           for (const label of missing) console.log(`FAIL no menu entry opens "${label}"`);
-          if (smokeProbePassed(outcome) && missing.length === 0) console.log(SMOKE_RENDER_MARKER);
+          // Keybindings are checked the same way: the opener stashes each view's registered
+          // bindings from Theia's registry, so a shortcut that no keystroke can reach is a named
+          // failure rather than a silent gap.
+          const keybindingRead = await sender.executeJavaScript("window.__orreryKeybindings ?? null").catch(() => null);
+          const missingKeybindings = findMissingKeybindings(
+            keybindingRead as Record<string, string[]> | null,
+            SMOKE_PROBE_KEYBINDINGS,
+          );
+          for (const failure of missingKeybindings) console.log(`FAIL ${failure}`);
+          if (smokeProbePassed(outcome) && missing.length === 0 && missingKeybindings.length === 0) console.log(SMOKE_RENDER_MARKER);
           setTimeout(() => app.quit(), 50);
         }).catch(error => {
           console.log(`FAIL smoke render probe: ${error instanceof Error ? error.message : "unknown failure"}`);
