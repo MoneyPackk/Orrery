@@ -16,7 +16,7 @@ import {
   type IntelligenceSettingsInput, type IntelligenceThreadInput, type IntelligenceSendInput, type IntelligenceClearInput, type IntelligenceProviderKind,
   type McpRegisterInput, type McpRemoveServerInput, type McpSetDecisionInput, type McpInvokeInput, type McpInvokeResult, type McpCatalog, type McpTransportKind, type McpToolDecision,
 } from "../common/mission-control-contracts";
-import { describeSmokeProbe, findMissingMenuLabels, runSmokeRenderProbe, smokeProbePassed, SMOKE_PROBE_VIEWS } from "./mission-control-smoke-probe";
+import { describeSmokeProbe, findMissingMenuLabels, runSmokeRenderProbe, smokeProbePassed, SMOKE_PROBE_VIEWS, MENUBAR_TITLES_SCRIPT } from "./mission-control-smoke-probe";
 
 /**
  * Printed only after every Mission Control view has rendered in the real renderer.
@@ -296,31 +296,31 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
           window.moveTop();
           window.webContents.focus();
         }
+        // With the custom title bar this application uses, Theia never pushes a menu over the
+        // `SetMenu` IPC channel; the menubar is a Lumino widget rendered in the page, and the
+        // probe reads its rendered titles directly.
         void runSmokeRenderProbe(sender).then(async outcome => {
           console.log(describeSmokeProbe(outcome));
           // The views are also checked for menu reachability, because a view that can only be
-          // opened by an unadvertised keybinding is not really reachable. On Windows Theia sets
-          // the menu per window, not on the application, so the check must read the window's own
-          // menu; `Menu.getApplicationMenu` would always report none. Theia rebuilds it with a
-          // debounce, so poll briefly before concluding the entries are missing.
+          // opened by an unadvertised keybinding is not really reachable. The menubar populates
+          // after the preferences are ready, so poll briefly before concluding it is missing.
           const expected: string[] = SMOKE_PROBE_VIEWS.map(view => view.region);
+          // The opener stashes the View submenu's model labels on the window — the
+          // renderer-side truth Theia builds the submenu from — because Lumino only renders open
+          // submenus in the DOM. The menubar itself is polled until it populates, which confirms
+          // the preference service initialized and the real menu widget rendered; both must hold,
+          // since a populated model with an empty bar would still leave the user with no menu.
           let missing = expected;
           for (let attempt = 0; attempt < 40 && missing.length > 0; attempt += 1) {
-            const found: string[] = [];
-            const walk = (items: readonly Electron.MenuItem[]): void => {
-              for (const item of items) {
-                found.push(item.label);
-                if (item.submenu) walk(item.submenu.items);
-              }
-            };
-            // On Windows Theia normally sets the menu per window, but this build's generated host
-            // has also been observed with an application menu, so read both. Electron's typings
-            // omit the per-window `menu` getter that mirrors `setMenu`, so that read is cast.
-            const senderWindow = BrowserWindow.fromWebContents(sender);
-            const menu = (senderWindow as unknown as { menu?: Electron.Menu | null } | null)?.menu
-              ?? Menu.getApplicationMenu();
-          if (menu) walk(menu.items);
-          missing = findMissingMenuLabels(found, expected);
+            const [barRead, modelRead] = await Promise.all([
+              sender.executeJavaScript(MENUBAR_TITLES_SCRIPT).catch(() => null),
+              sender.executeJavaScript("window.__orreryViewModelLabels ?? null").catch(() => null),
+            ]);
+            const titles = typeof barRead === "string" ? (JSON.parse(barRead) as { titles: string[] }).titles : [];
+            const modelLabels = Array.isArray(modelRead) ? (modelRead as string[]) : null;
+            if (titles.length > 0 && modelLabels) {
+              missing = findMissingMenuLabels(modelLabels, expected);
+            }
             if (missing.length > 0) await new Promise(resolve => setTimeout(resolve, 500));
           }
           for (const label of missing) console.log(`FAIL no menu entry opens "${label}"`);

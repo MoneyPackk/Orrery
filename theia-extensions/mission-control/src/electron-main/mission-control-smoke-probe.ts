@@ -102,7 +102,24 @@ export function findMissingMenuLabels(
   return expected.filter(label => !menuLabels.includes(label));
 }
 
-/** Formats the outcome so a failing smoke names the view instead of only failing. */
+/**
+ * Reads the DOM menubar Theia renders when the window uses a custom title bar.
+ *
+ * With `titleBarStyle: 'custom'` Theia never pushes a menu over the `SetMenu` IPC channel; the
+ * menubar is a Lumino widget in the page. This reads the titles it actually rendered, which is
+ * what the user sees, rather than an IPC payload that is never sent in this mode.
+ *
+ * Submenu popups only exist in the DOM while open, so the script reads the top-level titles from
+ * the bar and any currently rendered menu item labels. The check that consumes it accepts the
+ * view labels on either surface.
+ */
+export const MENUBAR_TITLES_SCRIPT = `(() => {
+  const bar = document.querySelector('#theia\\\\:menubar');
+  if (!bar) return null;
+  const titles = [...bar.querySelectorAll('.lm-MenuBar-itemLabel')].map(n => n.textContent ?? '');
+  const viewItems = [...document.querySelectorAll('.lm-Menu-itemLabel')].map(n => n.textContent ?? '');
+  return JSON.stringify({ titles, viewItems });
+})()`;
 export function describeSmokeProbe(outcome: SmokeProbeOutcome): string {
   const lines = outcome.views.map(view => view.found
     ? `ok   ${view.widgetId}: rendered "${view.region}"`
@@ -190,6 +207,5 @@ export async function runSmokeRenderProbe(
     failures.push(`shell contents: ${String(diagnostic)}`);
     failures.push(`view opens: ${openLog.join(" | ")}`);
   }
-  console.log(`DIAG ${openLog.join(' | ')}`);
   return { views, failures };
 }
