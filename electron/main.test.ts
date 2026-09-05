@@ -106,10 +106,12 @@ describe("Electron main security policy", () => {
     installGracefulShutdown(target as never, cleanup);
 
     beforeQuit?.({ preventDefault: vi.fn() });
-    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+    // `vi.waitFor` defaults to a 1s budget, which a loaded parallel suite can exceed between
+    // microtask checkpoints; the shutdown contract is what is under test, not its speed.
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce(), { timeout: 5_000 });
     expect(target.quit).not.toHaveBeenCalled();
     beforeQuit?.({ preventDefault: vi.fn() });
-    await vi.waitFor(() => expect(target.quit).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(target.quit).toHaveBeenCalledOnce(), { timeout: 5_000 });
     expect(cleanup).toHaveBeenCalledTimes(2);
   });
 

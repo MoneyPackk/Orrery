@@ -3,7 +3,11 @@ import type { Duplex, Readable, Writable } from "node:stream";
 import { approvalKeyFingerprint } from "../packages/mission-control-daemon/src/promotion-approval";
 
 const MAX_BOOTSTRAP_BYTES = 64 * 1024;
-const BOOTSTRAP_TIMEOUT_MS = 5_000;
+// In production this is a strict 5s handshake budget. Under a full parallel test suite, the
+// vite-node daemon child can take longer than that to cold-start and emit its challenge, which
+// reported as a flake; ORRERY_TEST_TIMEOUT_SCALE stretches it in test runs only, matching the
+// readiness budgets in daemon-authority-bootstrap.test.ts.
+const BOOTSTRAP_TIMEOUT_MS = 5_000 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1);
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const FIELDS = ["type", "version", "handoffNonce", "parentPid", "childPid", "instanceId", "challenge", "approvalPublicKey", "approvalKeyFingerprint"];

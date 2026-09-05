@@ -60,7 +60,10 @@ const input = (p: ReturnType<typeof ports>, overrides: Partial<RunMissionInput> 
   ...p, ...overrides,
 });
 
-describe("MissionRunner", () => {
+// Each case here creates a real Git worktree and runs a real command in it, which costs seconds
+// and grows under full-suite parallel load; vitest's 5s default produced intermittent failures
+// for correct code. 60s matches the sibling daemon suites.
+describe("MissionRunner", { timeout: 60_000 }, () => {
   afterEach(async () => Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))));
 
   it("persists each transition before emitting it and binds the result to mission, run, and plan revision", async () => {

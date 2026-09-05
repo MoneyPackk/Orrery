@@ -331,7 +331,10 @@ describe("MissionControlDaemonClient Orrery Intelligence", () => {
   });
 });
 
-describe("MissionControlDaemonClient gated MCP tools", () => {
+// Real-git and daemon-backed cases in this suite take 4-6s each *in isolation* against vitest's
+// 5s default, and longer under full-suite load — the budget that produced the "bounds tool
+// invocation" flake. 60s matches the sibling daemon suites.
+describe("MissionControlDaemonClient gated MCP tools", { timeout: 60_000 }, () => {
   const parent = {} as never;
   const stdioServer = { intentId: "r1", serverId: "files", label: "Files", transport: "stdio" as const, command: "/usr/bin/mcp-files", args: [] };
 
