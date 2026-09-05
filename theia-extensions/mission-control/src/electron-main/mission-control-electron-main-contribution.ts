@@ -1,6 +1,6 @@
 import { inject, injectable, optional } from "@theia/core/shared/inversify";
 import type { ElectronMainApplication, ElectronMainApplicationContribution } from "@theia/core/lib/electron-main/electron-main-application";
-import { app, BrowserWindow, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
+import { app, BrowserWindow, Menu, ipcMain, type IpcMain, type IpcMainInvokeEvent } from "@theia/core/electron-shared/electron";
 import {
   MissionControlHostService,
   MISSION_INTAKE_REPOSITORY_CHANNEL, MISSION_CREATE_CHANNEL, MISSION_RUN_CHANNEL, MISSION_CANCEL_CHANNEL, MISSION_INSPECT_CHANNEL,
@@ -16,7 +16,7 @@ import {
   type IntelligenceSettingsInput, type IntelligenceThreadInput, type IntelligenceSendInput, type IntelligenceClearInput, type IntelligenceProviderKind,
   type McpRegisterInput, type McpRemoveServerInput, type McpSetDecisionInput, type McpInvokeInput, type McpInvokeResult, type McpCatalog, type McpTransportKind, type McpToolDecision,
 } from "../common/mission-control-contracts";
-import { describeSmokeProbe, runSmokeRenderProbe, smokeProbePassed } from "./mission-control-smoke-probe";
+import { describeSmokeProbe, findMissingMenuLabels, runSmokeRenderProbe, smokeProbePassed, SMOKE_PROBE_VIEWS } from "./mission-control-smoke-probe";
 
 /**
  * Printed only after every Mission Control view has rendered in the real renderer.
@@ -296,9 +296,35 @@ export function registerMissionControlHostIpc(target: Pick<IpcMain, "handle" | "
           window.moveTop();
           window.webContents.focus();
         }
-        void runSmokeRenderProbe(sender).then(outcome => {
+        void runSmokeRenderProbe(sender).then(async outcome => {
           console.log(describeSmokeProbe(outcome));
-          if (smokeProbePassed(outcome)) console.log(SMOKE_RENDER_MARKER);
+          // The views are also checked for menu reachability, because a view that can only be
+          // opened by an unadvertised keybinding is not really reachable. On Windows Theia sets
+          // the menu per window, not on the application, so the check must read the window's own
+          // menu; `Menu.getApplicationMenu` would always report none. Theia rebuilds it with a
+          // debounce, so poll briefly before concluding the entries are missing.
+          const expected: string[] = SMOKE_PROBE_VIEWS.map(view => view.region);
+          let missing = expected;
+          for (let attempt = 0; attempt < 40 && missing.length > 0; attempt += 1) {
+            const found: string[] = [];
+            const walk = (items: readonly Electron.MenuItem[]): void => {
+              for (const item of items) {
+                found.push(item.label);
+                if (item.submenu) walk(item.submenu.items);
+              }
+            };
+            // On Windows Theia normally sets the menu per window, but this build's generated host
+            // has also been observed with an application menu, so read both. Electron's typings
+            // omit the per-window `menu` getter that mirrors `setMenu`, so that read is cast.
+            const senderWindow = BrowserWindow.fromWebContents(sender);
+            const menu = (senderWindow as unknown as { menu?: Electron.Menu | null } | null)?.menu
+              ?? Menu.getApplicationMenu();
+          if (menu) walk(menu.items);
+          missing = findMissingMenuLabels(found, expected);
+            if (missing.length > 0) await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          for (const label of missing) console.log(`FAIL no menu entry opens "${label}"`);
+          if (smokeProbePassed(outcome) && missing.length === 0) console.log(SMOKE_RENDER_MARKER);
           setTimeout(() => app.quit(), 50);
         }).catch(error => {
           console.log(`FAIL smoke render probe: ${error instanceof Error ? error.message : "unknown failure"}`);

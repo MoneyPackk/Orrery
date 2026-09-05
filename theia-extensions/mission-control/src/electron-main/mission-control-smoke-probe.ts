@@ -28,7 +28,12 @@ export const SMOKE_PROBE_VIEWS = [
 ] as const;
 
 export interface SmokeProbeView { readonly widgetId: string; readonly region: string; readonly found: boolean }
-export interface SmokeProbeOutcome { readonly views: ReadonlyArray<SmokeProbeView>; readonly failures: ReadonlyArray<string> }
+export interface SmokeProbeOutcome {
+  readonly views: ReadonlyArray<SmokeProbeView>;
+  readonly failures: ReadonlyArray<string>;
+  /** Menu labels found for the views, so an unreachable view is a failure rather than a surprise. */
+  readonly menuLabels?: ReadonlyArray<string>;
+}
 
 /** Minimal slice of `WebContents` the probe needs, so the logic stays unit-testable. */
 export interface SmokeProbeTarget {
@@ -81,6 +86,20 @@ export function buildRegionProbeScript(region: string): string {
     const node = shell.querySelector(${selector});
     return !!node && node.isConnected;
   })()`;
+}
+
+/**
+ * Checks each view is reachable from the application menu.
+ *
+ * This application depends on `@theia/core` alone, which contributes no "Open View..." command,
+ * so without explicit menu items the keybinding is the only way in and a user who does not
+ * already know the shortcut cannot find the view at all.
+ */
+export function findMissingMenuLabels(
+  menuLabels: ReadonlyArray<string>,
+  expected: ReadonlyArray<string> = SMOKE_PROBE_VIEWS.map(view => view.region),
+): string[] {
+  return expected.filter(label => !menuLabels.includes(label));
 }
 
 /** Formats the outcome so a failing smoke names the view instead of only failing. */
@@ -171,5 +190,6 @@ export async function runSmokeRenderProbe(
     failures.push(`shell contents: ${String(diagnostic)}`);
     failures.push(`view opens: ${openLog.join(" | ")}`);
   }
+  console.log(`DIAG ${openLog.join(' | ')}`);
   return { views, failures };
 }
