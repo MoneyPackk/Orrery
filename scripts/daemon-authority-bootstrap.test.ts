@@ -9,6 +9,14 @@ import { FileMissionStore, type GitInspector, type MissionSnapshot } from "../pa
 import { createDaemonAuthority } from "./daemon-authority-bootstrap";
 
 /**
+ * Scales the two adversarial-persistence budgets the way every other real-process suite in this
+ * repo does. Base 20s held in isolation but failed under a loaded full-suite run because each
+ * case bootstraps the daemon twice; scaling keeps the budget tight on an idle machine while
+ * giving a loaded one proportional headroom.
+ */
+const ADVERSARIAL_PERSISTENCE_BUDGET_MS = 20_000 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1);
+
+/**
  * Bootstraps a real daemon process per case. Measured 1-10s in isolation against Vitest's 5s
  * default, so correct code was failing under load. Scoped to this file, with headroom, rather
  * than raised globally: a fast test elsewhere should still fail when it becomes slow.
@@ -162,6 +170,8 @@ describe("daemon authority bootstrap", { timeout: 60_000 }, () => {
     }
   });
 
+  // Each case bootstraps the daemon twice against persisted state; under a loaded full-suite
+  // run the seven round-trips need far more than vitest's default, matching the sibling suites.
   it("rejects adversarial approved repository persistence", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-repository-corrupt-"));
     try {
@@ -187,7 +197,7 @@ describe("daemon authority bootstrap", { timeout: 60_000 }, () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, ADVERSARIAL_PERSISTENCE_BUDGET_MS);
 
   it("rejects adversarial repository proposal persistence", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-proposal-corrupt-"));
@@ -217,7 +227,7 @@ describe("daemon authority bootstrap", { timeout: 60_000 }, () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, ADVERSARIAL_PERSISTENCE_BUDGET_MS);
 
   it("durably fails a persisted active mission with an interruption event", async () => {
     const parent = await mkdtemp(join(tmpdir(), "orrery-authority-recovery-"));

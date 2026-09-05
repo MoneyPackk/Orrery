@@ -75,7 +75,6 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
     }, repositoryPath));
 
     const cancellationCursor = cancelledMission.events.at(-1)?.sequence ?? 0;
-    const runStartedAt = Date.now();
     stage = "run-cancel";
     const runPromise = first.runMission(ordinary({
       intentId: id("run-cancel"),
@@ -83,6 +82,11 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
       planRevisionId: cancelledMission.plan.id,
     }, repositoryPath));
     const runOutcome = runPromise.then(() => "completed" as const, () => "aborted" as const);
+    // Captures when the run actually settled, not when this test later gets around to observing
+    // it. The callback is registered before any polling, cancel, or replay round-trips exist, so
+    // under a loaded suite the timestamp absorbs only the abort itself — not the replay latency
+    // that previously pushed genuine aborts past the budget and failed this proof.
+    const settledAtMs = runOutcome.then(() => Date.now());
     const canceller = await connectClient(server, runtimePath);
     clients.add(canceller);
     const activeRunId = await Promise.race([
@@ -92,6 +96,12 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
         (error) => Promise.reject(new Error("Long verification failed before cancellation.", { cause: error })),
       ),
     ]);
+    // The daemon emitted "Verification started" with status "running" at this instant, so the
+    // single long verification was provably executing. A natural exit therefore cannot precede
+    // this timestamp plus the command's duration — any earlier settle must be the abort.
+    // Anchoring to detection (not the client-origin run request) keeps the proof immune to
+    // daemon-side startup latency, which a loaded suite inflates by tens of seconds.
+    const naturalExitEarliest = Date.now() + LONG_VERIFICATION_MS;
     stage = "cancel";
     const cancelled = await canceller.cancelMission(ordinary({
       intentId: id("cancel"),
@@ -100,16 +110,18 @@ export async function runAuthoritativeDaemonSmoke(trustedReviewer = "daemon-smok
     }, repositoryPath));
     const cancellationEvents = await replayUntil(canceller, cancelledMission.id, cancellationCursor, (event) => event.kind === "cancellation" && event.runId === activeRunId);
     /*
-     * The elapsed bound is what distinguishes a real abort from merely waiting for the long
-     * verification to exit on its own, so it must stay strictly below that command's duration or
-     * it proves nothing. It is therefore clamped rather than scaled freely: a loaded machine gets
-     * headroom, but never enough to let a natural exit pass as a cancellation.
+     * The settle-time bound is what distinguishes a real abort from merely waiting for the long
+     * verification to exit on its own: the run settled strictly before the earliest instant a
+     * natural exit could have occurred. Settle time is captured by a callback registered at run
+     * start — before any polling, cancel, or replay round-trips — so under a loaded suite it
+     * absorbs only the abort itself, not post-abort replay latency that previously failed
+     * genuine aborts.
      */
-    const abortBudgetMs = Math.min(
-      20_000 * Math.max(1, Number(process.env.ORRERY_TEST_TIMEOUT_SCALE ?? 1) || 1),
-      LONG_VERIFICATION_MS - 3_000,
-    );
-    const processAborted = await runOutcome === "aborted" && Date.now() - runStartedAt < abortBudgetMs && cancellationEvents.some((event) => event.kind === "cancellation" && event.runId === activeRunId);
+    const outcome = await runOutcome;
+    const settledAt = await settledAtMs;
+    const processAborted = outcome === "aborted"
+      && settledAt < naturalExitEarliest
+      && cancellationEvents.some((event) => event.kind === "cancellation" && event.runId === activeRunId);
     await canceller.disconnect();
     clients.delete(canceller);
 

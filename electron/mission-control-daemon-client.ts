@@ -73,6 +73,7 @@ export class MissionControlDaemonClient implements MissionIpcService {
   private shuttingDown = false;
   private intelligenceStore?: Promise<IntelligenceStore>;
   private intelligenceCalls: number[] = [];
+  private providerRequests: number[] = [];
   private mcpStore?: Promise<McpPolicyStore>;
   private toolCalls: number[] = [];
   private readonly registrationCalls: number[] = [];
@@ -240,15 +241,26 @@ export class MissionControlDaemonClient implements MissionIpcService {
     threadId: string,
     parent?: BrowserWindow,
   ): Promise<{ reply: string; toolCalls: ReadonlyArray<IntelligenceToolCall> }> {
-    const request = this.dependencies.requestIntelligenceRaw ?? requestIntelligenceRaw;
+    const rawRequest = this.dependencies.requestIntelligenceRaw ?? requestIntelligenceRaw;
+    // Every provider request charges the spend window, whichever path makes it: the plain reply
+    // below, each tool round, or the closing request. Wrapping here keeps a single choke point
+    // instead of charging at each call site.
+    const request = (...args: Parameters<typeof rawRequest>): ReturnType<typeof rawRequest> => {
+      this.chargeProviderRequest();
+      return rawRequest(...args);
+    };
     const catalog = parent ? await this.declarableTools() : undefined;
     if (!catalog || catalog.size === 0) {
       // No tools to offer, so this is an ordinary text turn. Uses the plain reply path so a
-      // caller that only stubs `requestIntelligenceReply` still drives the whole turn.
-      const reply = await (this.dependencies.requestIntelligenceReply ?? requestIntelligenceReply)(
+      // caller that only stubs `requestIntelligenceReply` still drives the whole turn. It still
+      // charges the spend window: a text-only request spends provider quota exactly like a
+      // tool-round request does.
+      const replyFn = this.dependencies.requestIntelligenceReply ?? requestIntelligenceReply;
+      const reply = await replyFn(
         { credentials, history, prompt },
         this.dependencies.fetchImpl,
       );
+      this.chargeProviderRequest();
       return { reply, toolCalls: [] };
     }
 
@@ -382,12 +394,52 @@ export class MissionControlDaemonClient implements MissionIpcService {
     })));
   }
 
-  /** Bounds provider spend and abuse from a compromised renderer: 20 requests per rolling minute. */
+  /**
+   * Bounds provider spend and abuse from a compromised renderer.
+   *
+   * Two separate windows, because a turn can spend far more provider quota than its message
+   * count suggests: a tool-driven turn issues an initial request, one round per tool batch, and
+   * a closing request — up to `2 + MAX_TOOL_CALLS_PER_TURN` provider requests for a single user
+   * message. The intent window bounds how many turns a renderer can start; the provider-request
+   * window bounds the actual HTTP spend, which is what the earlier single window silently
+   * under-counted: 20 tool-heavy turns cost up to 140 requests in a minute while the limiter's
+   * comment claimed 20.
+   */
+  private static readonly INTENT_WINDOW_MS = 60_000;
+  private static readonly MAX_INTENTS_PER_WINDOW = 20;
+  /**
+   * Bounds actual provider requests. With the tool budget at 5 a tool-heavy turn costs 6
+   * requests (initial + 5 tool rounds... closing replaces the last round), so 20 turns could
+   * spend 120 requests while the documented limit suggested 20. This window charges every
+   * request, so the bound holds regardless of how deep future turns go; 60 keeps headroom for
+   * ordinary multi-tool conversations while halving the worst-case spend the old limiter
+   * silently allowed.
+   */
+  private static readonly MAX_PROVIDER_REQUESTS_PER_WINDOW = 60;
+
+  private pruneWindow(window: number[], now: number, windowMs: number): number[] {
+    const kept = window.filter(stamp => now - stamp < windowMs);
+    return kept.length !== window.length ? kept : window;
+  }
+
   private assertIntelligenceRate(now = Date.now()): void {
-    const windowMs = 60_000;
-    this.intelligenceCalls = this.intelligenceCalls.filter(stamp => now - stamp < windowMs);
-    if (this.intelligenceCalls.length >= 20) throw new Error("Too many Orrery Intelligence requests. Wait a moment and try again.");
+    this.intelligenceCalls = this.pruneWindow(this.intelligenceCalls, now, MissionControlDaemonClient.INTENT_WINDOW_MS);
+    if (this.intelligenceCalls.length >= MissionControlDaemonClient.MAX_INTENTS_PER_WINDOW) {
+      throw new Error("Too many Orrery Intelligence requests. Wait a moment and try again.");
+    }
     this.intelligenceCalls.push(now);
+  }
+
+  /**
+   * Charges one provider request against the spend window. Called before every HTTP request the
+   * turn makes, so the bound holds regardless of how many tool rounds a turn takes.
+   */
+  private chargeProviderRequest(now = Date.now()): void {
+    this.providerRequests = this.pruneWindow(this.providerRequests, now, MissionControlDaemonClient.INTENT_WINDOW_MS);
+    if (this.providerRequests.length >= MissionControlDaemonClient.MAX_PROVIDER_REQUESTS_PER_WINDOW) {
+      throw new Error("Too many Orrery Intelligence requests. Wait a moment and try again.");
+    }
+    this.providerRequests.push(now);
   }
 
   async listMcpCatalog(): Promise<McpCatalog> {

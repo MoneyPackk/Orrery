@@ -741,7 +741,9 @@ describe("MissionControlDaemonClient gated MCP tools", { timeout: 60_000 }, () =
   });
 });
 
-describe("MissionControlDaemonClient model-driven tool calls", () => {
+// The spend-bound test at the end of this suite drives ~120 provider requests across 20 turns,
+// which exceeds vitest's 5s default under full-suite load. 60s matches the sibling suites.
+describe("MissionControlDaemonClient model-driven tool calls", { timeout: 60_000 }, () => {
   const parent = {} as never;
   const stdioServer = { intentId: "r1", serverId: "files", label: "Files", transport: "stdio" as const, command: "/usr/bin/mcp-files", args: [] };
 
@@ -824,6 +826,28 @@ describe("MissionControlDaemonClient model-driven tool calls", () => {
     const { adapter, confirmToolCall } = await harness({ bodies: [toolUse(), answer("done")] });
     await adapter.sendIntelligenceMessage({ intentId: "i2", threadId: "main", text: "read it" }, parent);
     expect(confirmToolCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds total provider requests even when each turn runs tool rounds", async () => {
+    // One tool call per provider response: every turn spends its full tool budget, so each user
+    // message costs 6 provider requests. The intent window alone would therefore permit
+    // 20 x 6 = 120 requests in a minute while the documented limit suggested 20.
+    const { adapter, requestIntelligenceRaw } = await harness({ bodies: [toolUse()] });
+    await adapter.setMcpToolDecision({ intentId: "d-allow", serverId: "files", name: "read_file", decision: "allow" }, parent);
+    // The provider-request window caps total spend at 60 — half of what the intent window
+    // alone allows. The turn that crosses the boundary is rejected mid-flight, which is the
+    // product behavior: the spend window binds even with the intent window nowhere near full.
+    let overflowed = false;
+    for (let turn = 0; turn < 20 && !overflowed; turn += 1) {
+      await adapter.sendIntelligenceMessage({ intentId: `i-spend-${turn}`, threadId: "spend", text: "read everything" }, parent)
+        .catch(error => { if (!/Too many/.test(String(error))) throw error; overflowed = true; });
+    }
+    expect(overflowed).toBe(true);
+    expect(requestIntelligenceRaw.mock.calls.length).toBeLessThanOrEqual(60);
+    expect(requestIntelligenceRaw.mock.calls.length).toBeGreaterThan(20);
+    // No further spend is possible this minute.
+    await expect(adapter.sendIntelligenceMessage({ intentId: "i-overflow", threadId: "spend", text: "read everything" }, parent))
+      .rejects.toThrow(/Too many/);
   });
 
   it("does not run the tool when the operator declines, and says so to the model", async () => {
